@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>勤怠管理</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', 'Hiragino Sans', sans-serif;
+      background: #f0f4f8;
+      color: #2d3748;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #2b6cb0;
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    #status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #fc8181;
+      display: inline-block;
+      margin-right: 6px;
+      transition: background 0.3s;
+    }
+    #status-dot.connected { background: #68d391; }
+    #status-label { font-size: 0.8rem; opacity: 0.9; }
+
+    .container { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+
+    /* ─── Card ─── */
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
+    }
+    .card h2 {
+      font-size: 1rem; font-weight: 700;
+      color: #2b6cb0; margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #bee3f8;
+    }
+
+    /* ─── Form ─── */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+    }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group.full { grid-column: 1 / -1; }
+    label { font-size: 0.8rem; font-weight: 600; color: #4a5568; }
+    input, textarea {
+      padding: 9px 12px;
+      border: 1px solid #cbd5e0;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      background: #f7fafc;
+    }
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: #4299e1;
+      box-shadow: 0 0 0 3px rgba(66,153,225,0.15);
+      background: white;
+    }
+    textarea { resize: vertical; min-height: 70px; }
+
+    .work-result {
+      background: #ebf8ff;
+      border: 1px solid #bee3f8;
+      border-radius: 8px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .work-result span { font-size: 0.8rem; color: #2b6cb0; font-weight: 600; }
+    .work-result strong { font-size: 1.3rem; color: #2b6cb0; }
+
+    .btn-row { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+    .btn {
+      padding: 10px 22px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.2s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: #2b6cb0; color: white; }
+    .btn-primary:hover:not(:disabled) { background: #2c5282; }
+    .btn-secondary { background: #e2e8f0; color: #4a5568; }
+    .btn-secondary:hover:not(:disabled) { background: #cbd5e0; }
+    .btn-success { background: #276749; color: white; }
+    .btn-success:hover:not(:disabled) { background: #22543d; }
+
+    /* ─── Filter ─── */
+    .filter-row {
+      display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
+      margin-bottom: 16px;
+    }
+    .filter-row .form-group { flex: 1; min-width: 130px; }
+
+    /* ─── Table ─── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    thead { background: #2b6cb0; color: white; }
+    th { padding: 10px 12px; text-align: left; font-weight: 600; white-space: nowrap; }
+    td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: #f0f7ff; }
+    td.memo-cell { max-width: 200px; white-space: pre-wrap; word-break: break-word; }
+    td.work-time { font-weight: 700; color: #2b6cb0; }
+    .btn-delete {
+      padding: 4px 10px;
+      background: #fff5f5; color: #c53030;
+      border: 1px solid #fed7d7;
+      border-radius: 6px; font-size: 0.78rem;
+      cursor: pointer; transition: background 0.15s;
+    }
+    .btn-delete:hover { background: #fed7d7; }
+
+    /* ─── Summary ─── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+    }
+    .summary-card {
+      background: #ebf8ff;
+      border-radius: 10px;
+      padding: 14px;
+      text-align: center;
+    }
+    .summary-card .label { font-size: 0.75rem; color: #4a5568; margin-bottom: 4px; }
+    .summary-card .value { font-size: 1.4rem; font-weight: 700; color: #2b6cb0; }
+
+    #empty-msg {
+      text-align: center;
+      color: #a0aec0;
+      padding: 32px;
+      font-size: 0.9rem;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 24px; right: 24px;
+      background: #2d3748; color: white;
+      padding: 12px 20px; border-radius: 10px;
+      font-size: 0.875rem; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      opacity: 0; transition: opacity 0.3s;
+      pointer-events: none; z-index: 9999;
+      max-width: 420px; line-height: 1.5;
+    }
+    .toast.show { opacity: 1; }
+    .toast.error { background: #c53030; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>勤怠管理</h1>
+  <div>
+    <span id="status-dot"></span>
+    <span id="status-label">未接続</span>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- 入力フォーム -->
+  <div class="card">
+    <h2>勤怠入力</h2>
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="f-date">日付</label>
+        <input type="date" id="f-date" />
+      </div>
+      <div class="form-group">
+        <label for="f-start">出勤時間</label>
+        <input type="time" id="f-start" />
+      </div>
+      <div class="form-group">
+        <label for="f-end">退勤時間</label>
+        <input type="time" id="f-end" />
+      </div>
+      <div class="form-group">
+        <label for="f-break">休憩時間（分）</label>
+        <input type="number" id="f-break" min="0" max="480" value="60" />
+      </div>
+      <div class="form-group full">
+        <label for="f-memo">作業内容・メモ</label>
+        <textarea id="f-memo" placeholder="例）定例会議、資料作成、コードレビューなど"></textarea>
+      </div>
+    </div>
+
+    <div class="work-result" id="work-result" style="display:none">
+      <span>実労働時間：</span>
+      <strong id="work-display">–</strong>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btn-save" onclick="saveRecord()" disabled>保存する</button>
+      <button class="btn btn-secondary" onclick="clearForm()">クリア</button>
+    </div>
+  </div>
+
+  <!-- 集計 -->
+  <div class="card" id="summary-card" style="display:none">
+    <h2>集計（絞り込み期間）</h2>
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="label">出勤日数</div>
+        <div class="value" id="sum-days">0 日</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">総労働時間</div>
+        <div class="value" id="sum-hours">0 h</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">1日平均</div>
+        <div class="value" id="sum-avg">0 h</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 一覧 -->
+  <div class="card">
+    <h2>勤怠一覧</h2>
+
+    <div class="filter-row">
+      <div class="form-group">
+        <label>開始日</label>
+        <input type="date" id="filter-from" onchange="loadRecords()" />
+      </div>
+      <div class="form-group">
+        <label>終了日</label>
+        <input type="date" id="filter-to" onchange="loadRecords()" />
+      </div>
+      <button class="btn btn-secondary" onclick="clearFilter()">リセット</button>
+      <button class="btn btn-success" id="btn-csv" onclick="exportCSV()" disabled>CSVエクスポート</button>
+    </div>
+
+    <div class="table-wrap">
+      <table id="records-table">
+        <thead>
+          <tr>
+            <th>日付</th>
+            <th>出勤</th>
+            <th>退勤</th>
+            <th>休憩</th>
+            <th>実労働時間</th>
+            <th>メモ</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="records-body">
+          <tr><td colspan="7" id="empty-msg">接続後にデータを読み込みます</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ─── Config ───────────────────────────────────────────────
+  const SUPABASE_URL = 'https://hgiflgrsvocvdlfnqckp.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_2xzzcqRo_WjTdTnjwiO0RQ_G0BjVCIw';
+  const TABLE = 'kintai';
+
+  let sb = null;
+  let records = [];
+
+  // ─── Init ─────────────────────────────────────────────────
+  function onConnected() {
+    document.getElementById('status-dot').classList.add('connected');
+    document.getElementById('status-label').textContent = '接続済み';
+    document.getElementById('btn-save').disabled = false;
+    document.getElementById('btn-csv').disabled = false;
+    loadRecords();
+  }
+
+  // ─── 自動計算 ──────────────────────────────────────────────
+  function calcWorkMin() {
+    const s = document.getElementById('f-start').value;
+    const e = document.getElementById('f-end').value;
+    const b = parseInt(document.getElementById('f-break').value) || 0;
+    if (!s || !e) return null;
+    const [sh, sm] = s.split(':').map(Number);
+    const [eh, em] = e.split(':').map(Number);
+    let total = (eh * 60 + em) - (sh * 60 + sm) - b;
+    if (total < 0) total += 24 * 60; // 日跨ぎ対応
+    return total;
+  }
+
+  function formatMin(min) {
+    if (min == null || isNaN(min)) return '–';
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return `${h}時間${m > 0 ? m + '分' : ''}`;
+  }
+
+  ['f-start', 'f-end', 'f-break'].forEach(id => {
+    document.getElementById(id).addEventListener('input', updateCalc);
+  });
+
+  function updateCalc() {
+    const min = calcWorkMin();
+    const el = document.getElementById('work-result');
+    if (min !== null && !isNaN(min)) {
+      document.getElementById('work-display').textContent = formatMin(min);
+      el.style.display = 'flex';
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
+  // ─── 自動接続 ─────────────────────────────────────────────
+  (function setDefaults() {
+    const today = new Date().toLocaleDateString('sv');
+    document.getElementById('f-date').value = today;
+
+    try {
+      sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+      onConnected();
+    } catch (e) {
+      showToast('Supabase接続エラー: ' + e.message, true);
+      console.error('Supabase init error:', e);
+    }
+  })();
+
+  // ─── 保存 ─────────────────────────────────────────────────
+  async function saveRecord() {
+    const date = document.getElementById('f-date').value;
+    const start_time = document.getElementById('f-start').value;
+    const end_time = document.getElementById('f-end').value;
+    const break_min = parseInt(document.getElementById('f-break').value) || 0;
+    const memo = document.getElementById('f-memo').value.trim();
+
+    if (!date || !start_time || !end_time) {
+      showToast('日付・出勤・退勤時間を入力してください', true);
+      return;
+    }
+
+    const work_min = calcWorkMin();
+    if (work_min == null || work_min < 0) {
+      showToast('時間の入力が正しくありません', true);
+      return;
+    }
+
+    const btn = document.getElementById('btn-save');
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+
+    const { error } = await sb.from(TABLE).insert([{ date, start_time, end_time, break_min, work_min, memo }]);
+
+    btn.disabled = false;
+    btn.textContent = '保存する';
+
+    if (error) {
+      console.error('Insert error:', error);
+      const isRLS = error.code === '42501' || (error.message || '').includes('row-level security');
+      const msg = isRLS
+        ? 'RLSポリシーが原因で保存できません。Supabaseダッシュボードで kintai テーブルのRLSを無効化するか、INSERT ポリシーを追加してください。'
+        : `保存失敗 [${error.code || '?'}]: ${error.message}${error.hint ? ' / ' + error.hint : ''}`;
+      showToast(msg, true, isRLS ? 8000 : 4000);
+    } else {
+      showToast('保存しました');
+      clearForm();
+      loadRecords();
+    }
+  }
+
+  // ─── 一覧取得 ──────────────────────────────────────────────
+  async function loadRecords() {
+    if (!sb) return;
+
+    const from = document.getElementById('filter-from').value;
+    const to = document.getElementById('filter-to').value;
+
+    let query = sb.from(TABLE).select('*').order('date', { ascending: false });
+    if (from) query = query.gte('date', from);
+    if (to)   query = query.lte('date', to);
+
+    const { data, error } = await query;
+    if (error) { showToast('取得失敗: ' + error.message, true); return; }
+
+    records = data || [];
+    renderTable(records);
+    renderSummary(records);
+  }
+
+  function renderTable(data) {
+    const tbody = document.getElementById('records-body');
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="7" id="empty-msg">データがありません</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.map(r => `
+      <tr>
+        <td>${r.date}</td>
+        <td>${r.start_time || '–'}</td>
+        <td>${r.end_time || '–'}</td>
+        <td>${r.break_min ?? 0}分</td>
+        <td class="work-time">${formatMin(r.work_min)}</td>
+        <td class="memo-cell">${escHtml(r.memo || '')}</td>
+        <td><button class="btn-delete" onclick="deleteRecord('${r.id}')">削除</button></td>
+      </tr>
+    `).join('');
+  }
+
+  function renderSummary(data) {
+    const card = document.getElementById('summary-card');
+    if (!data.length) { card.style.display = 'none'; return; }
+
+    const totalMin = data.reduce((s, r) => s + (r.work_min || 0), 0);
+    const days = data.length;
+    const avgMin = Math.round(totalMin / days);
+
+    document.getElementById('sum-days').textContent = days + ' 日';
+    document.getElementById('sum-hours').textContent = (totalMin / 60).toFixed(1) + ' h';
+    document.getElementById('sum-avg').textContent = (avgMin / 60).toFixed(1) + ' h';
+    card.style.display = '';
+  }
+
+  // ─── 削除 ─────────────────────────────────────────────────
+  async function deleteRecord(id) {
+    if (!confirm('この記録を削除しますか？')) return;
+    const { error } = await sb.from(TABLE).delete().eq('id', id);
+    if (error) { showToast('削除失敗: ' + error.message, true); return; }
+    showToast('削除しました');
+    loadRecords();
+  }
+
+  // ─── CSV エクスポート ──────────────────────────────────────
+  function exportCSV() {
+    if (!records.length) { showToast('エクスポートするデータがありません', true); return; }
+
+    const header = ['日付', '出勤時間', '退勤時間', '休憩(分)', '労働時間(分)', '作業内容・メモ'];
+    const rows = records.map(r => [
+      r.date,
+      r.start_time || '',
+      r.end_time || '',
+      r.break_min ?? 0,
+      r.work_min ?? 0,
+      (r.memo || '').replace(/"/g, '""')
+    ].map(v => `"${v}"`).join(','));
+
+    const bom = '\uFEFF';
+    const csv = bom + [header.join(','), ...rows].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const from = document.getElementById('filter-from').value;
+    const to = document.getElementById('filter-to').value;
+    const suffix = (from || to) ? `_${from || ''}~${to || ''}` : '';
+    a.href = url;
+    a.download = `kintai${suffix}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('CSVをエクスポートしました');
+  }
+
+  // ─── ユーティリティ ────────────────────────────────────────
+  function clearForm() {
+    document.getElementById('f-date').value = new Date().toLocaleDateString('sv');
+    document.getElementById('f-start').value = '';
+    document.getElementById('f-end').value = '';
+    document.getElementById('f-break').value = '60';
+    document.getElementById('f-memo').value = '';
+    document.getElementById('work-result').style.display = 'none';
+  }
+
+  function clearFilter() {
+    document.getElementById('filter-from').value = '';
+    document.getElementById('filter-to').value = '';
+    loadRecords();
+  }
+
+  function escHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  let toastTimer;
+  function showToast(msg, isError = false, duration = 3500) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast show' + (isError ? ' error' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.className = 'toast'; }, duration);
+  }
+</script>
+</body>
+</html>
