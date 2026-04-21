@@ -136,6 +136,15 @@
       cursor: pointer; transition: background 0.15s;
     }
     .btn-delete:hover { background: #fed7d7; }
+    .btn-save-row {
+      padding: 4px 10px;
+      background: #ebf8ff; color: #2b6cb0;
+      border: 1px solid #bee3f8;
+      border-radius: 6px; font-size: 0.78rem;
+      cursor: pointer; transition: background 0.15s;
+      margin-right: 4px;
+    }
+    .btn-save-row:hover { background: #bee3f8; }
 
     /* ─── Summary ─── */
     .summary-grid {
@@ -672,17 +681,56 @@
       return;
     }
 
+    const inp = 'border:1px solid #cbd5e0;border-radius:6px;padding:4px 6px;font-size:0.85rem;background:#f7fafc;width:100%';
+
     tbody.innerHTML = data.map(r => `
-      <tr>
-        <td>${r.date}</td>
-        <td>${r.start_time || '–'}</td>
-        <td>${r.end_time || '–'}</td>
-        <td>${r.break_min ?? 0}分</td>
+      <tr data-id="${r.id}">
+        <td><input type="date" class="r-date" value="${r.date}" style="${inp};min-width:120px"></td>
+        <td><input type="time" class="r-start" value="${r.start_time || ''}" style="${inp};min-width:82px"></td>
+        <td><input type="time" class="r-end" value="${r.end_time || ''}" style="${inp};min-width:82px"></td>
+        <td style="white-space:nowrap"><input type="number" class="r-break" value="${r.break_min ?? 0}" min="0" max="480" style="${inp};width:52px"> 分</td>
         <td class="work-time">${formatMin(r.work_min)}</td>
-        <td class="memo-cell">${escHtml(r.memo || '')}</td>
-        <td><button class="btn-delete" onclick="deleteRecord('${r.id}')">削除</button></td>
+        <td><input type="text" class="r-memo" value="${escHtml(r.memo || '')}" style="${inp}"></td>
+        <td style="white-space:nowrap">
+          <button class="btn-save-row" onclick="updateRecord('${r.id}', this)">保存</button>
+          <button class="btn-delete" onclick="deleteRecord('${r.id}')">削除</button>
+        </td>
       </tr>
     `).join('');
+  }
+
+  async function updateRecord(id, btn) {
+    if (!sb) { showToast('データベースに接続されていません', true); return; }
+    const tr = btn.closest('tr');
+    const date     = tr.querySelector('.r-date').value;
+    const start    = tr.querySelector('.r-start').value;
+    const end      = tr.querySelector('.r-end').value;
+    const breakMin = parseInt(tr.querySelector('.r-break').value) || 0;
+    const memo     = tr.querySelector('.r-memo').value;
+
+    let workMin = 0;
+    if (start && end) {
+      const [sh, sm] = start.split(':').map(Number);
+      const [eh, em] = end.split(':').map(Number);
+      workMin = (eh * 60 + em) - (sh * 60 + sm) - breakMin;
+      if (workMin < 0) workMin = 0;
+    }
+
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+    const { error } = await sb.from(TABLE).update({
+      date, start_time: start || null, end_time: end || null,
+      break_min: breakMin, work_min: workMin, memo
+    }).eq('id', id);
+    btn.disabled = false;
+    btn.textContent = '保存';
+
+    if (error) {
+      showToast('更新失敗: ' + error.message, true);
+    } else {
+      tr.querySelector('.work-time').textContent = formatMin(workMin);
+      showToast('更新しました');
+    }
   }
 
   function renderSummary(data) {
@@ -892,10 +940,10 @@
   }
 
   function calcBreakMin(durationMin) {
-    if (durationMin < 180) return 0;
-    if (durationMin < 360) return 30;
-    if (durationMin < 480) return 45;
-    return 60;
+    if (durationMin <= 180) return 0;   // 3時間以下
+    if (durationMin <= 360) return 30;  // 3時間超〜6時間以下
+    if (durationMin <= 480) return 45;  // 6時間超〜8時間以下
+    return 60;                          // 8時間超
   }
 
   function toJSTDate(dateTimeStr) {
