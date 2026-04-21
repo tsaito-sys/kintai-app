@@ -1180,7 +1180,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"><\/script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Yu Gothic','游ゴシック','YuGothic','Hiragino Kaku Gothic Pro','Meiryo',sans-serif;background:#fff;color:#222;font-size:14px;line-height:1.75}
+  body{font-family:'Meiryo','メイリオ','Hiragino Kaku Gothic Pro',sans-serif;background:#fff;color:#222;font-size:14px;line-height:1.75}
   .toolbar{background:#2b6cb0;padding:10px 20px;display:flex;gap:10px;align-items:center}
   .toolbar button{padding:7px 18px;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer}
   .tb-pdf{background:white;color:#2b6cb0}
@@ -1226,9 +1226,10 @@
 
   @media print{
     .toolbar{display:none}
-    @page{margin:5mm 10mm}
-    #inv-outer{max-width:100%;width:100%;margin:0;min-height:calc(297mm - 10mm);display:flex;flex-direction:column}
-    #inv{padding:10px 20px;flex:1}
+    @page{margin:0}
+    body{margin:0;padding:0}
+    #inv-outer{max-width:100%;width:100%;margin:0;min-height:297mm;display:flex;flex-direction:column}
+    #inv{padding:20px 30px;flex:1}
   }
 </style>
 </head>
@@ -1307,11 +1308,11 @@ function dlPDF(){
   // PDF用にコンパクトなスタイルを一時適用（印刷設定と同等）
   const prevOuter = outer.style.cssText;
   const prevPad   = inner.style.padding;
-  outer.style.cssText = 'max-width:100%;width:100%;margin:0;border-top:7.5px solid #000;border-bottom:7.5px solid #000;min-height:287mm;display:flex;flex-direction:column';
-  inner.style.cssText = 'padding:10px 20px;flex:1';
+  outer.style.cssText = 'max-width:100%;width:100%;margin:0;border-top:7.5px solid #000;border-bottom:7.5px solid #000;min-height:297mm;display:flex;flex-direction:column';
+  inner.style.cssText = 'padding:20px 30px;flex:1';
 
   html2pdf().set({
-    margin:[5,10],
+    margin:0,
     filename:'請求書_${h(invNo)}.pdf',
     html2canvas:{scale:2,useCORS:true,letterRendering:true,windowWidth:794},
     jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
