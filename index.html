@@ -812,8 +812,10 @@
     const preview = document.getElementById('gcal-preview');
     const tbody   = document.getElementById('gcal-preview-body');
 
+    const inStyle = 'border:1px solid #cbd5e0;border-radius:6px;padding:4px 6px;font-size:0.85rem;background:#f7fafc';
+
     if (!gcalPreviewData.length) {
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#a0aec0">イベントが見つかりませんでした</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:#a0aec0">イベントが見つかりませんでした</td></tr>';
       preview.style.display = '';
       return;
     }
@@ -821,11 +823,11 @@
     tbody.innerHTML = gcalPreviewData.map((row, i) => `
       <tr>
         <td><input type="checkbox" class="gcal-row-check" data-idx="${i}" checked></td>
-        <td>${escHtml(row.date)}</td>
-        <td><input type="time" class="gcal-in-start" data-idx="${i}" value="${escHtml(row.start)}" style="border:1px solid #cbd5e0;border-radius:6px;padding:4px 6px;font-size:0.85rem;width:90px"></td>
-        <td><input type="time" class="gcal-in-end"   data-idx="${i}" value="${escHtml(row.end)}"   style="border:1px solid #cbd5e0;border-radius:6px;padding:4px 6px;font-size:0.85rem;width:90px"></td>
-        <td><input type="number" class="gcal-in-break" data-idx="${i}" value="${row.breakMin}" min="0" max="480" style="border:1px solid #cbd5e0;border-radius:6px;padding:4px 6px;font-size:0.85rem;width:64px"></td>
-        <td class="memo-cell">${escHtml(row.memo)}</td>
+        <td><input type="date"   class="gcal-in-date"  data-idx="${i}" value="${escHtml(row.date)}"  style="${inStyle};width:130px"></td>
+        <td><input type="time"   class="gcal-in-start" data-idx="${i}" value="${escHtml(row.start)}" style="${inStyle};width:90px"></td>
+        <td><input type="time"   class="gcal-in-end"   data-idx="${i}" value="${escHtml(row.end)}"   style="${inStyle};width:90px"></td>
+        <td><input type="number" class="gcal-in-break" data-idx="${i}" value="${row.breakMin}" min="0" max="480" style="${inStyle};width:64px"></td>
+        <td><input type="text"   class="gcal-in-memo"  data-idx="${i}" value="${escHtml(row.memo)}"  style="${inStyle};width:100%"></td>
       </tr>
     `).join('');
 
@@ -845,16 +847,18 @@
     if (!checks.length) { showToast('取り込む日程を選択してください', true); return; }
 
     const rows = checks.map(cb => {
-      const i    = parseInt(cb.dataset.idx);
-      const row  = gcalPreviewData[i];
+      const i        = parseInt(cb.dataset.idx);
+      const row      = gcalPreviewData[i];
+      const date     = document.querySelector(`.gcal-in-date[data-idx="${i}"]`).value  || row.date;
       const start    = document.querySelector(`.gcal-in-start[data-idx="${i}"]`).value || row.start;
       const end      = document.querySelector(`.gcal-in-end[data-idx="${i}"]`).value   || row.end;
       const breakMin = parseInt(document.querySelector(`.gcal-in-break[data-idx="${i}"]`).value) || 0;
+      const memo     = document.querySelector(`.gcal-in-memo[data-idx="${i}"]`).value;
       const [sh, sm] = start.split(':').map(Number);
       const [eh, em] = end.split(':').map(Number);
       let workMin = (eh * 60 + em) - (sh * 60 + sm) - breakMin;
       if (workMin < 0) workMin = 0;
-      return { date: row.date, start_time: start, end_time: end, break_min: breakMin, work_min: workMin, memo: row.memo };
+      return { date, start_time: start, end_time: end, break_min: breakMin, work_min: workMin, memo };
     });
 
     const btn = document.getElementById('gcal-import-btn');
