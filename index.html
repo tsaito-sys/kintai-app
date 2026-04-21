@@ -344,6 +344,44 @@
     </div>
   </div>
 
+  <!-- 請求書作成 -->
+  <div class="card">
+    <h2>請求書作成</h2>
+    <div class="form-grid">
+      <div class="form-group full">
+        <label for="inv-client">請求先会社名</label>
+        <input type="text" id="inv-client" placeholder="例）株式会社〇〇" />
+      </div>
+      <div class="form-group full">
+        <label for="inv-issuer">請求者（氏名・会社名）</label>
+        <input type="text" id="inv-issuer" placeholder="例）山田 太郎" />
+      </div>
+      <div class="form-group">
+        <label for="inv-date">請求日</label>
+        <input type="date" id="inv-date" />
+      </div>
+      <div class="form-group">
+        <label for="inv-from">期間（開始）</label>
+        <input type="date" id="inv-from" />
+      </div>
+      <div class="form-group">
+        <label for="inv-to">期間（終了）</label>
+        <input type="date" id="inv-to" />
+      </div>
+      <div class="form-group">
+        <label for="inv-rate">時給単価（円）</label>
+        <input type="number" id="inv-rate" min="0" placeholder="例）3000" />
+      </div>
+      <div class="form-group">
+        <label for="inv-tax">消費税率（%）</label>
+        <input type="number" id="inv-tax" min="0" max="100" value="10" />
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="generateInvoice()">請求書を作成・PDF印刷</button>
+    </div>
+  </div>
+
   <!-- 集計 -->
   <div class="card" id="summary-card" style="display:none">
     <h2>集計（絞り込み期間）</h2>
@@ -827,6 +865,158 @@
       gcalPreviewData = [];
       loadRecords();
     }
+  }
+
+  // ─── 請求書作成 ───────────────────────────────────────────
+  (function loadInvoiceSettings() {
+    const s = JSON.parse(localStorage.getItem('invoice_settings') || '{}');
+    if (s.issuer)  document.getElementById('inv-issuer').value = s.issuer;
+    if (s.client)  document.getElementById('inv-client').value = s.client;
+    if (s.rate)    document.getElementById('inv-rate').value   = s.rate;
+    if (s.taxRate) document.getElementById('inv-tax').value    = s.taxRate;
+
+    const now      = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toLocaleDateString('sv');
+    const lastDay  = new Date(now.getFullYear(), now.getMonth() + 1, 0).toLocaleDateString('sv');
+    document.getElementById('inv-date').value = now.toLocaleDateString('sv');
+    document.getElementById('inv-from').value = firstDay;
+    document.getElementById('inv-to').value   = lastDay;
+  })();
+
+  async function generateInvoice() {
+    if (!sb) { showToast('データベースに接続されていません', true); return; }
+
+    const client  = document.getElementById('inv-client').value.trim();
+    const issuer  = document.getElementById('inv-issuer').value.trim();
+    const invDate = document.getElementById('inv-date').value;
+    const from    = document.getElementById('inv-from').value;
+    const to      = document.getElementById('inv-to').value;
+    const rate    = parseFloat(document.getElementById('inv-rate').value) || 0;
+    const taxRate = parseFloat(document.getElementById('inv-tax').value) ?? 10;
+
+    if (!client || !issuer || !invDate || !from || !to || !rate) {
+      showToast('すべての項目を入力してください', true); return;
+    }
+    if (from > to) { showToast('期間の開始日は終了日より前にしてください', true); return; }
+
+    // ポップアップブロック対策：await前にウィンドウを開く
+    const win = window.open('', '_blank');
+    if (!win) { showToast('ポップアップがブロックされました。ブラウザの設定で許可してください', true, 5000); return; }
+    win.document.write('<html><body style="font-family:sans-serif;padding:40px;color:#666">データを読み込み中...</body></html>');
+
+    localStorage.setItem('invoice_settings', JSON.stringify({ issuer, client, rate, taxRate }));
+
+    const { data, error } = await sb.from(TABLE).select('*')
+      .gte('date', from).lte('date', to).order('date', { ascending: true });
+
+    if (error)  { win.close(); showToast('データ取得失敗: ' + error.message, true); return; }
+    if (!data || !data.length) { win.close(); showToast('指定期間の勤怠データがありません', true); return; }
+
+    const totalMin = data.reduce((s, r) => s + (r.work_min || 0), 0);
+    const totalHrs = totalMin / 60;
+    const subtotal = Math.floor(totalHrs * rate);
+    const tax      = Math.floor(subtotal * taxRate / 100);
+    const total    = subtotal + tax;
+    const invNo    = invDate.replace(/-/g, '').substring(0, 6) + '-001';
+
+    const html = buildInvoiceHTML({ invNo, client, issuer, invDate, from, to,
+      records: data, totalMin, totalHrs, rate, taxRate, subtotal, tax, total });
+
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+  }
+
+  function buildInvoiceHTML({ invNo, client, issuer, invDate, from, to,
+      records, totalMin, totalHrs, rate, taxRate, subtotal, tax, total }) {
+
+    const fmtDate  = d => d.replace(/-/g, '/');
+    const fmtMoney = n => Math.round(n).toLocaleString('ja-JP');
+    const fmtMin   = min => {
+      const h = Math.floor(min / 60), m = min % 60;
+      return `${h}時間${m > 0 ? m + '分' : ''}`;
+    };
+
+    const rows = records.map(r => {
+      const hrs = (r.work_min || 0) / 60;
+      const amt = Math.floor(hrs * rate);
+      return `<tr>
+        <td>${escHtml(r.date)}</td>
+        <td>${escHtml(r.start_time || '–')}</td>
+        <td>${escHtml(r.end_time || '–')}</td>
+        <td class="num">${fmtMin(r.work_min || 0)}</td>
+        <td class="num">¥${fmtMoney(rate)}</td>
+        <td class="num">¥${fmtMoney(amt)}</td>
+      </tr>`;
+    }).join('');
+
+    return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>請求書 ${invNo}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Hiragino Kaku Gothic Pro','Meiryo','Yu Gothic',sans-serif;max-width:820px;margin:0 auto;padding:48px 44px;color:#222;font-size:13.5px;line-height:1.7}
+  h1{text-align:center;font-size:26px;font-weight:700;letter-spacing:.25em;border-bottom:3px solid #2b6cb0;padding-bottom:12px;margin-bottom:32px;color:#1a365d}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;gap:20px}
+  .to-block .company{font-size:19px;font-weight:700;border-bottom:2px solid #222;padding-bottom:3px;display:inline-block}
+  .to-block .total-amount{margin-top:18px;font-size:22px;font-weight:700;color:#2b6cb0}
+  .to-block .total-amount small{font-size:13px;font-weight:400;color:#555;margin-left:6px}
+  .from-block{text-align:right;color:#444;min-width:200px}
+  .from-block .inv-no{font-size:11.5px;color:#888;margin-bottom:2px}
+  .from-block .inv-date{font-size:12.5px;margin-bottom:12px}
+  .from-block .issuer{font-size:14px;font-weight:600}
+  .stamp{width:72px;height:72px;border:2px solid #bbb;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:11px;margin:10px 0 0 auto}
+  .period-bar{background:#ebf8ff;border:1px solid #bee3f8;border-radius:8px;padding:10px 16px;margin-bottom:24px;display:flex;align-items:center;flex-wrap:wrap;gap:8px 24px;font-size:12.5px;color:#2b6cb0}
+  .period-bar strong{font-size:13px}
+  table.detail{width:100%;border-collapse:collapse;margin-bottom:20px}
+  table.detail thead th{background:#2b6cb0;color:white;padding:9px 12px;font-size:12.5px;font-weight:600}
+  table.detail tbody td{padding:9px 12px;border-bottom:1px solid #e2e8f0;font-size:12.5px}
+  table.detail tbody tr:nth-child(even){background:#f7fafc}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .summary-wrap{display:flex;justify-content:flex-end;margin-bottom:32px}
+  table.summary{width:320px;border-collapse:collapse}
+  table.summary td{padding:9px 14px;border-bottom:1px solid #e2e8f0;font-size:13px}
+  table.summary .lbl{color:#555}
+  table.summary .amt{text-align:right;font-variant-numeric:tabular-nums}
+  table.summary .total td{background:#2b6cb0;color:white;font-size:15px;font-weight:700;border:none;padding:11px 14px}
+  @media print{body{padding:20px}@page{margin:12mm}}
+</style>
+</head>
+<body>
+<h1>請　求　書</h1>
+<div class="header">
+  <div class="to-block">
+    <div><span class="company">${escHtml(client)}</span>　御中</div>
+    <div style="margin-top:12px;color:#555;font-size:12.5px">下記のとおりご請求申し上げます。</div>
+    <div class="total-amount">¥ ${fmtMoney(total)}<small>（税込）</small></div>
+  </div>
+  <div class="from-block">
+    <div class="inv-no">請求書番号：${invNo}</div>
+    <div class="inv-date">発行日：${fmtDate(invDate)}</div>
+    <div class="issuer">${escHtml(issuer)}</div>
+    <div class="stamp">印</div>
+  </div>
+</div>
+<div class="period-bar">
+  <span><strong>請求期間：</strong>${fmtDate(from)} 〜 ${fmtDate(to)}</span>
+  <span><strong>作業日数：</strong>${records.length} 日</span>
+  <span><strong>総労働時間：</strong>${fmtMin(totalMin)}（${totalHrs.toFixed(2)}h）</span>
+</div>
+<table class="detail">
+  <thead><tr><th>日付</th><th>出勤</th><th>退勤</th><th class="num">労働時間</th><th class="num">時給単価</th><th class="num">金額</th></tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+<div class="summary-wrap">
+  <table class="summary">
+    <tr><td class="lbl">小計</td><td class="amt">¥ ${fmtMoney(subtotal)}</td></tr>
+    <tr><td class="lbl">消費税（${taxRate}%）</td><td class="amt">¥ ${fmtMoney(tax)}</td></tr>
+    <tr class="total"><td>合計金額</td><td class="amt">¥ ${fmtMoney(total)}</td></tr>
+  </table>
+</div>
+<script>window.onload=function(){window.print()}<\/script>
+</body></html>`;
   }
 
   // ─── ユーティリティ ────────────────────────────────────────
