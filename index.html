@@ -1186,7 +1186,7 @@
   .tb-pdf{background:white;color:#2b6cb0}
   .tb-print{background:#ebf8ff;color:#2b6cb0}
   .tb-label{color:rgba(255,255,255,0.8);font-size:13px;margin-left:auto}
-  #inv-outer{max-width:780px;margin:24px auto;border-top:7.5px solid #000;border-bottom:7.5px solid #000}
+  #inv-outer{max-width:780px;margin:24px auto;border-top:19px solid #000;border-bottom:19px solid #000}
   #inv{padding:36px 44px}
 
   .inv-top-right{text-align:right;font-size:13px;color:#555;margin-bottom:16px;line-height:2}
@@ -1197,7 +1197,7 @@
   .inv-right{min-width:210px;max-width:230px;font-size:13px;color:#444;line-height:2;text-align:right}
 
   .inv-client-name{font-size:18px;font-weight:700;border-bottom:2px solid #222;padding-bottom:3px;display:inline-block;margin-bottom:14px}
-  .inv-msg{font-size:13.5px;color:#555;margin-bottom:14px}
+  .inv-msg{font-size:13.5px;color:#555;margin-bottom:30px}
   .inv-amount-area{border-bottom:2px solid #222;padding-bottom:6px;margin-bottom:12px;display:inline-block;min-width:220px}
   .inv-amount-label{font-size:12.5px;color:#555;margin-bottom:2px}
   .inv-amount-value{font-size:23px;font-weight:700;color:#222}
@@ -1229,7 +1229,8 @@
     @page{margin:0}
     body{margin:0;padding:0}
     #inv-outer{max-width:100%;width:100%;margin:0;min-height:297mm;display:flex;flex-direction:column}
-    #inv{padding:20px 30px;flex:1}
+    #inv{padding:20px 30px;flex:1;display:flex;flex-direction:column}
+    .inv-notes{margin-top:auto}
   }
 </style>
 </head>
@@ -1261,7 +1262,8 @@
     </div>
     <div class="inv-right">
       <div class="issuer-name">${h(issuer)}</div>
-      ${fromAddr   ? `<div>${fromAddr}</div>` : ''}
+      ${zip     ? `<div>〒${h(zip)}</div>` : ''}
+      ${address ? `<div style="white-space:nowrap">${h(address)}</div>` : ''}
       ${tel        ? `<div>TEL：${h(tel)}</div>` : ''}
       ${email      ? `<div>${h(email)}</div>` : ''}
       ${invoiceReg ? `<div class="inv-reg">登録番号：${h(invoiceReg)}</div>` : ''}
@@ -1308,8 +1310,8 @@ function dlPDF(){
   // PDF用にコンパクトなスタイルを一時適用（印刷設定と同等）
   const prevOuter = outer.style.cssText;
   const prevPad   = inner.style.padding;
-  outer.style.cssText = 'max-width:100%;width:100%;margin:0;border-top:7.5px solid #000;border-bottom:7.5px solid #000;min-height:297mm;display:flex;flex-direction:column';
-  inner.style.cssText = 'padding:20px 30px;flex:1';
+  outer.style.cssText = 'max-width:100%;width:100%;margin:0;border-top:19px solid #000;border-bottom:19px solid #000;min-height:297mm;display:flex;flex-direction:column';
+  inner.style.cssText = 'padding:20px 30px;flex:1;display:flex;flex-direction:column';
 
   html2pdf().set({
     margin:0,
@@ -1318,7 +1320,7 @@ function dlPDF(){
     jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
   }).from(outer).save().then(()=>{
     outer.style.cssText = prevOuter;
-    inner.style.cssText = prevPad ? 'padding:'+prevPad : '';
+    inner.style.cssText = '';
   });
 }
 <\/script>
