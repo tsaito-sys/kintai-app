@@ -269,7 +269,7 @@
     </div>
 
     <div class="btn-row">
-      <button class="btn btn-primary" id="btn-save" onclick="saveRecord()" disabled>保存する</button>
+      <button class="btn btn-primary" id="btn-save" onclick="saveRecord()">保存する</button>
       <button class="btn btn-secondary" onclick="clearForm()">クリア</button>
     </div>
   </div>
@@ -288,6 +288,9 @@
             Google Cloud Console → APIとサービス → 認証情報 → OAuthクライアントID（Webアプリケーション）で取得できます。<br>
             「承認済みのJavaScriptオリジン」にこのページのURL（例: <code>http://localhost</code> または <code>file://</code> の場合は <code>http://localhost</code>）を登録してください。
           </p>
+          <div class="btn-row" style="margin-top:10px">
+            <button class="btn btn-primary" onclick="saveGcalClientId()">クライアントIDを保存</button>
+          </div>
         </div>
       </details>
     </div>
@@ -374,7 +377,7 @@
         <input type="date" id="filter-to" onchange="loadRecords()" />
       </div>
       <button class="btn btn-secondary" onclick="clearFilter()">リセット</button>
-      <button class="btn btn-success" id="btn-csv" onclick="exportCSV()" disabled>CSVエクスポート</button>
+      <button class="btn btn-success" id="btn-csv" onclick="exportCSV()">CSVエクスポート</button>
     </div>
 
     <div class="table-wrap">
@@ -414,8 +417,6 @@
   function onConnected() {
     document.getElementById('status-dot').classList.add('connected');
     document.getElementById('status-label').textContent = '接続済み';
-    document.getElementById('btn-save').disabled = false;
-    document.getElementById('btn-csv').disabled = false;
     loadRecords();
   }
 
@@ -470,6 +471,7 @@
 
   // ─── 保存 ─────────────────────────────────────────────────
   async function saveRecord() {
+    if (!sb) { showToast('データベースに接続されていません', true); return; }
     const date = document.getElementById('f-date').value;
     const start_time = document.getElementById('f-start').value;
     const end_time = document.getElementById('f-end').value;
@@ -574,6 +576,7 @@
 
   // ─── CSV エクスポート ──────────────────────────────────────
   function exportCSV() {
+    if (!sb) { showToast('データベースに接続されていません', true); return; }
     if (!records.length) { showToast('エクスポートするデータがありません', true); return; }
 
     const header = ['日付', '出勤時間', '退勤時間', '休憩(分)', '労働時間(分)', '作業内容・メモ'];
@@ -636,6 +639,14 @@
     document.getElementById('gcal-from').value = firstDay;
     document.getElementById('gcal-to').value = today;
   })();
+
+  function saveGcalClientId() {
+    const clientId = document.getElementById('gcal-client-id').value.trim();
+    if (!clientId) { showToast('クライアントIDを入力してください', true); return; }
+    localStorage.setItem('gcal_client_id', clientId);
+    document.querySelector('.gcal-settings details').open = false;
+    showToast('クライアントIDを保存しました');
+  }
 
   function gcalSignIn() {
     const clientId = document.getElementById('gcal-client-id').value.trim();
