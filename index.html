@@ -1170,7 +1170,7 @@
     const fromAddr = [zip ? `〒${h(zip)}` : '', h(address)].filter(Boolean).join('　');
     const bankLine = [h(bank), h(branch), branchNo?`（${h(branchNo)}）`:'', h(accountType), h(accountNo), h(accountName)].filter(Boolean).join('　');
 
-    const emptyRows = Array(6).fill('<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>').join('');
+    const emptyRows = Array(4).fill('<tr><td>&nbsp;</td><td></td><td></td><td></td></tr>').join('');
 
     return `<!DOCTYPE html>
 <html lang="ja">
@@ -1180,50 +1180,54 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"><\/script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Yu Gothic','游ゴシック','YuGothic','Hiragino Kaku Gothic Pro','Meiryo',sans-serif;background:#fff;color:#222;font-size:13px;line-height:1.75}
+  body{font-family:'Yu Gothic','游ゴシック','YuGothic','Hiragino Kaku Gothic Pro','Meiryo',sans-serif;background:#fff;color:#222;font-size:14px;line-height:1.75}
   .toolbar{background:#2b6cb0;padding:10px 20px;display:flex;gap:10px;align-items:center}
-  .toolbar button{padding:7px 18px;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer}
+  .toolbar button{padding:7px 18px;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer}
   .tb-pdf{background:white;color:#2b6cb0}
   .tb-print{background:#ebf8ff;color:#2b6cb0}
-  .tb-label{color:rgba(255,255,255,0.8);font-size:12px;margin-left:auto}
-  #inv{max-width:780px;margin:24px auto;padding:36px 44px;border-top:3px solid #000;border-bottom:3px solid #000;border-left:none;border-right:none}
+  .tb-label{color:rgba(255,255,255,0.8);font-size:13px;margin-left:auto}
+  #inv{max-width:780px;margin:24px auto;padding:36px 44px;border-top:7.5px solid #000;border-bottom:7.5px solid #000;border-left:none;border-right:none}
 
-  .inv-top-right{text-align:right;font-size:12px;color:#555;margin-bottom:16px;line-height:2}
-  .inv-title{text-align:center;font-size:24px;font-weight:700;letter-spacing:.3em;margin-bottom:24px}
+  .inv-top-right{text-align:right;font-size:13px;color:#555;margin-bottom:16px;line-height:2}
+  .inv-title{text-align:center;font-size:25px;font-weight:700;letter-spacing:.3em;margin-bottom:24px}
 
   .inv-parties{display:flex;justify-content:space-between;gap:24px;margin-bottom:28px}
   .inv-left{flex:1}
-  .inv-right{min-width:210px;max-width:230px;font-size:12px;color:#444;line-height:2;text-align:right}
+  .inv-right{min-width:210px;max-width:230px;font-size:13px;color:#444;line-height:2;text-align:right}
 
-  .inv-client-name{font-size:17px;font-weight:700;border-bottom:2px solid #222;padding-bottom:3px;display:inline-block;margin-bottom:14px}
-  .inv-msg{font-size:12.5px;color:#555;margin-bottom:14px}
-  .inv-amount-box{border:1px solid #2b6cb0;border-radius:8px;padding:12px 18px;margin-bottom:12px;display:inline-block;min-width:220px}
-  .inv-amount-label{font-size:11.5px;color:#555;margin-bottom:2px}
-  .inv-amount-value{font-size:22px;font-weight:700;color:#2b6cb0}
-  .inv-amount-note{font-size:12px;color:#666;margin-left:6px;font-weight:400}
-  .inv-due{font-size:12px;color:#555}
+  .inv-client-name{font-size:18px;font-weight:700;border-bottom:2px solid #222;padding-bottom:3px;display:inline-block;margin-bottom:14px}
+  .inv-msg{font-size:13.5px;color:#555;margin-bottom:14px}
+  .inv-amount-area{border-bottom:2px solid #222;padding-bottom:6px;margin-bottom:12px;display:inline-block;min-width:220px}
+  .inv-amount-label{font-size:12.5px;color:#555;margin-bottom:2px}
+  .inv-amount-value{font-size:23px;font-weight:700;color:#222}
+  .inv-amount-note{font-size:13px;color:#555;margin-left:6px;font-weight:400}
+  .inv-due{font-size:13px;color:#555}
 
-  .inv-right .issuer-name{font-size:14px;font-weight:700;color:#222;margin-bottom:4px}
-  .inv-right .inv-reg{font-size:11px;color:#888}
+  .inv-right .issuer-name{font-size:15px;font-weight:700;color:#222;margin-bottom:4px}
+  .inv-right .inv-reg{font-size:12px;color:#888}
 
   table.det{width:100%;border-collapse:collapse;margin-bottom:4px}
-  table.det th{background:#f0f0f0;color:#222;padding:8px 12px;font-size:12px;font-weight:600;text-align:left;border:1px solid #ccc}
+  table.det th{background:#f0f0f0;color:#222;padding:8px 12px;font-size:13px;font-weight:600;text-align:left;border:1px solid #ccc}
   table.det th.r,table.det td.r{text-align:right}
-  table.det td{padding:10px 12px;border:1px solid #e2e8f0;font-size:12.5px}
+  table.det td{padding:10px 12px;border:1px solid #e2e8f0;font-size:13.5px}
 
   .sum-wrap{display:flex;justify-content:flex-end;margin-bottom:24px}
   table.sum{width:280px;border-collapse:collapse}
-  table.sum td{padding:7px 12px;border-bottom:1px solid #e2e8f0;font-size:12.5px}
+  table.sum td{padding:7px 12px;border-bottom:1px solid #e2e8f0;font-size:13.5px}
   table.sum .l{color:#666}
   table.sum .r{text-align:right;font-variant-numeric:tabular-nums}
-  table.sum .tot td{background:#f0f0f0;color:#222;font-weight:700;font-size:14px;border:1px solid #ccc;padding:9px 12px}
+  table.sum .tot td{background:#f0f0f0;color:#222;font-weight:700;font-size:15px;border:1px solid #ccc;padding:9px 12px}
 
   .inv-notes{margin-top:4px;border-top:1px solid #e2e8f0;padding-top:16px}
   .inv-note-sec{margin-bottom:20px}
-  .inv-note-sec h3{font-size:11.5px;font-weight:700;color:#555;border-bottom:1px solid #e2e8f0;padding-bottom:4px;margin-bottom:8px}
-  .inv-note-sec p{font-size:12px;color:#444;white-space:pre-wrap;line-height:1.8}
+  .inv-note-sec h3{font-size:12.5px;font-weight:700;color:#555;border-bottom:1px solid #e2e8f0;padding-bottom:4px;margin-bottom:8px}
+  .inv-note-sec p{font-size:13px;color:#444;white-space:pre-wrap;line-height:1.8}
 
-  @media print{.toolbar{display:none}#inv{border-top:3px solid #000;border-bottom:3px solid #000;border-left:none;border-right:none;margin:0;padding:20px}@page{margin:10mm}}
+  @media print{
+    .toolbar{display:none}
+    @page{margin:5mm 10mm}
+    #inv{max-width:100%;width:100%;margin:0;padding:16px 20px;border-top:7.5px solid #000;border-bottom:7.5px solid #000;border-left:none;border-right:none}
+  }
 </style>
 </head>
 <body>
@@ -1245,7 +1249,7 @@
     <div class="inv-left">
       <div class="inv-client-name">${h(client)}　御中</div>
       <div class="inv-msg">下記の通りご請求申し上げます。</div>
-      <div class="inv-amount-box">
+      <div class="inv-amount-area">
         <div class="inv-amount-label">ご請求金額</div>
         <div class="inv-amount-value">¥ ${fm(total)}<span class="inv-amount-note">（税込）</span></div>
       </div>
@@ -1261,11 +1265,10 @@
   </div>
 
   <table class="det">
-    <thead><tr><th style="width:36px">品番</th><th>品名</th><th class="r" style="width:120px">数量</th><th class="r" style="width:100px">単価</th><th class="r" style="width:100px">金額</th></tr></thead>
+    <thead><tr><th>品番・品名</th><th class="r" style="width:130px">数量</th><th class="r" style="width:110px">単価</th><th class="r" style="width:110px">金額</th></tr></thead>
     <tbody>
       <tr>
-        <td style="text-align:center">1</td>
-        <td>業務委託費（${fd(from)} 〜 ${fd(to)}）</td>
+        <td>1. 業務委託費（${fd(from)} 〜 ${fd(to)}）</td>
         <td class="r">${fmin(totalMin)}（${totalHrs.toFixed(2)}h）</td>
         <td class="r">¥${fm(rate)} / h</td>
         <td class="r">¥${fm(subtotal)}</td>
