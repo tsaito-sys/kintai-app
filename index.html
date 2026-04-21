@@ -336,7 +336,10 @@
     <!-- プレビュー -->
     <div id="gcal-preview" style="display:none; margin-top:16px">
       <div class="gcal-preview-header">
-        <label style="font-weight:600">取得したイベント（チェックした日程を取り込みます）</label>
+        <div>
+          <label style="font-weight:600">取得したイベント</label>
+          <span style="font-size:0.75rem;color:#718096;margin-left:8px">各セルを直接編集できます。休憩時間は稼働時間から自動計算されています。</span>
+        </div>
         <label style="cursor:pointer;gap:6px;display:flex;align-items:center">
           <input type="checkbox" id="gcal-check-all" checked onchange="toggleAllGcal(this.checked)"> 全選択
         </label>
@@ -347,14 +350,17 @@
             <tr>
               <th style="width:36px"></th>
               <th>日付</th>
-              <th>出勤</th>
-              <th>退勤</th>
-              <th style="width:80px">休憩(分)</th>
+              <th>出勤時間</th>
+              <th>退勤時間</th>
+              <th style="width:90px">休憩(分)<br><span style="font-weight:400;font-size:0.7rem;opacity:0.85">自動計算</span></th>
               <th>メモ</th>
             </tr>
           </thead>
           <tbody id="gcal-preview-body"></tbody>
         </table>
+      </div>
+      <div style="font-size:0.72rem;color:#718096;margin-top:6px">
+        休憩自動計算ルール：3h未満→0分 ／ 3〜6h→30分 ／ 6〜8h→45分 ／ 8h以上→60分
       </div>
       <div class="gcal-import-row">
         <button class="btn btn-primary" id="gcal-import-btn" onclick="importGcalRecords()">選択した日程を取り込む</button>
@@ -852,8 +858,8 @@
       }
 
       const data   = await res.json();
-      // タイトルに「稼働時間」を含むイベントのみ対象
-      const events = (data.items || []).filter(e => e.start?.dateTime && e.summary?.includes('稼働時間'));
+      // タイトルに「稼働予定」を含むイベントのみ対象
+      const events = (data.items || []).filter(e => e.start?.dateTime && e.summary?.includes('稼働予定'));
 
       // 日ごとにグループ化して最早出勤・最遅退勤を算出
       const byDay = {};
@@ -906,25 +912,26 @@
     const preview = document.getElementById('gcal-preview');
     const tbody   = document.getElementById('gcal-preview-body');
 
-    const inStyle = 'border:1px solid #cbd5e0;border-radius:6px;padding:4px 6px;font-size:0.85rem;background:#f7fafc';
-
     if (!gcalPreviewData.length) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:#a0aec0">イベントが見つかりませんでした</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:#a0aec0">「稼働予定」を含むイベントが見つかりませんでした</td></tr>';
       preview.style.display = '';
       return;
     }
 
-    tbody.innerHTML = gcalPreviewData.map((row, i) => `
-      <tr>
-        <td><input type="checkbox" class="gcal-row-check" data-idx="${i}" checked></td>
-        <td><input type="date"   class="gcal-in-date"  data-idx="${i}" value="${escHtml(row.date)}"  style="${inStyle};width:130px"></td>
-        <td><input type="time"   class="gcal-in-start" data-idx="${i}" value="${escHtml(row.start)}" style="${inStyle};width:90px"></td>
-        <td><input type="time"   class="gcal-in-end"   data-idx="${i}" value="${escHtml(row.end)}"   style="${inStyle};width:90px"></td>
-        <td><input type="number" class="gcal-in-break" data-idx="${i}" value="${row.breakMin}" min="0" max="480" style="${inStyle};width:64px"></td>
-        <td><input type="text"   class="gcal-in-memo"  data-idx="${i}" value="${escHtml(row.memo)}"  style="${inStyle};width:100%"></td>
-      </tr>
-    `).join('');
+    // 編集可能なinput要素で各行を描画
+    const rows = gcalPreviewData.map((row, i) => {
+      const inp = 'border:1px solid #4299e1;border-radius:6px;padding:5px 7px;font-size:0.875rem;background:white;color:#2d3748';
+      return `<tr>
+        <td style="text-align:center"><input type="checkbox" class="gcal-row-check" data-idx="${i}" checked></td>
+        <td><input type="date"   class="gcal-in-date"  data-idx="${i}" value="${escHtml(row.date)}"    style="${inp};width:134px"></td>
+        <td><input type="time"   class="gcal-in-start" data-idx="${i}" value="${escHtml(row.start)}"   style="${inp};width:92px"></td>
+        <td><input type="time"   class="gcal-in-end"   data-idx="${i}" value="${escHtml(row.end)}"     style="${inp};width:92px"></td>
+        <td><input type="number" class="gcal-in-break" data-idx="${i}" value="${Number(row.breakMin)}" min="0" max="480" style="${inp};width:66px"></td>
+        <td><input type="text"   class="gcal-in-memo"  data-idx="${i}" value="${escHtml(row.memo)}"    style="${inp};width:100%;min-width:120px"></td>
+      </tr>`;
+    });
 
+    tbody.innerHTML = rows.join('');
     document.getElementById('gcal-check-all').checked = true;
     preview.style.display = '';
   }
