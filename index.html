@@ -325,20 +325,16 @@
             <tr>
               <th style="width:36px"></th>
               <th>日付</th>
-              <th>出勤（最早）</th>
-              <th>退勤（最遅）</th>
-              <th>イベント</th>
+              <th>出勤</th>
+              <th>退勤</th>
+              <th style="width:80px">休憩(分)</th>
+              <th>メモ</th>
             </tr>
           </thead>
           <tbody id="gcal-preview-body"></tbody>
         </table>
       </div>
       <div class="gcal-import-row">
-        <div class="form-group">
-          <label for="gcal-break">休憩時間</label>
-          <input type="number" id="gcal-break" min="0" max="480" value="60" />
-          <span style="font-size:0.85rem;color:#4a5568">分</span>
-        </div>
         <button class="btn btn-primary" id="gcal-import-btn" onclick="importGcalRecords()">選択した日程を取り込む</button>
       </div>
     </div>
@@ -762,7 +758,8 @@
       }
 
       const data   = await res.json();
-      const events = (data.items || []).filter(e => e.start?.dateTime);
+      // タイトルに「稼働時間」を含むイベントのみ対象
+      const events = (data.items || []).filter(e => e.start?.dateTime && e.summary?.includes('稼働時間'));
 
       // 日ごとにグループ化して最早出勤・最遅退勤を算出
       const byDay = {};
@@ -774,12 +771,14 @@
         byDay[date].titles.push(ev.summary || '(タイトルなし)');
       }
 
-      gcalPreviewData = Object.entries(byDay).sort(([a], [b]) => a.localeCompare(b)).map(([date, d]) => ({
-        date,
-        start: d.starts.sort()[0],
-        end:   d.ends.sort().reverse()[0],
-        memo:  d.titles.join(' / ')
-      }));
+      gcalPreviewData = Object.entries(byDay).sort(([a], [b]) => a.localeCompare(b)).map(([date, d]) => {
+        const start = d.starts.sort()[0];
+        const end   = d.ends.sort().reverse()[0];
+        const [sh, sm] = start.split(':').map(Number);
+        const [eh, em] = end.split(':').map(Number);
+        const spanMin = (eh * 60 + em) - (sh * 60 + sm);
+        return { date, start, end, memo: d.titles.join(' / '), breakMin: calcBreakMin(spanMin) };
+      });
 
       renderGcalPreview();
       showToast(gcalPreviewData.length ? `${gcalPreviewData.length}日分のイベントを取得しました` : 'イベントが見つかりませんでした');
@@ -790,6 +789,13 @@
       btn.disabled = false;
       btn.textContent = 'カレンダーを取得';
     }
+  }
+
+  function calcBreakMin(durationMin) {
+    if (durationMin < 180) return 0;
+    if (durationMin < 360) return 30;
+    if (durationMin < 480) return 45;
+    return 60;
   }
 
   function toJSTDate(dateTimeStr) {
@@ -816,8 +822,9 @@
       <tr>
         <td><input type="checkbox" class="gcal-row-check" data-idx="${i}" checked></td>
         <td>${escHtml(row.date)}</td>
-        <td>${escHtml(row.start)}</td>
-        <td>${escHtml(row.end)}</td>
+        <td><input type="time" class="gcal-in-start" data-idx="${i}" value="${escHtml(row.start)}" style="border:1px solid #cbd5e0;border-radius:6px;padding:4px 6px;font-size:0.85rem;width:90px"></td>
+        <td><input type="time" class="gcal-in-end"   data-idx="${i}" value="${escHtml(row.end)}"   style="border:1px solid #cbd5e0;border-radius:6px;padding:4px 6px;font-size:0.85rem;width:90px"></td>
+        <td><input type="number" class="gcal-in-break" data-idx="${i}" value="${row.breakMin}" min="0" max="480" style="border:1px solid #cbd5e0;border-radius:6px;padding:4px 6px;font-size:0.85rem;width:64px"></td>
         <td class="memo-cell">${escHtml(row.memo)}</td>
       </tr>
     `).join('');
@@ -837,15 +844,17 @@
     const checks = Array.from(document.querySelectorAll('.gcal-row-check:checked'));
     if (!checks.length) { showToast('取り込む日程を選択してください', true); return; }
 
-    const breakMin = parseInt(document.getElementById('gcal-break').value) || 0;
-    const selected = checks.map(cb => gcalPreviewData[parseInt(cb.dataset.idx)]);
-
-    const rows = selected.map(row => {
-      const [sh, sm] = row.start.split(':').map(Number);
-      const [eh, em] = row.end.split(':').map(Number);
+    const rows = checks.map(cb => {
+      const i    = parseInt(cb.dataset.idx);
+      const row  = gcalPreviewData[i];
+      const start    = document.querySelector(`.gcal-in-start[data-idx="${i}"]`).value || row.start;
+      const end      = document.querySelector(`.gcal-in-end[data-idx="${i}"]`).value   || row.end;
+      const breakMin = parseInt(document.querySelector(`.gcal-in-break[data-idx="${i}"]`).value) || 0;
+      const [sh, sm] = start.split(':').map(Number);
+      const [eh, em] = end.split(':').map(Number);
       let workMin = (eh * 60 + em) - (sh * 60 + sm) - breakMin;
       if (workMin < 0) workMin = 0;
-      return { date: row.date, start_time: row.start, end_time: row.end, break_min: breakMin, work_min: workMin, memo: row.memo };
+      return { date: row.date, start_time: start, end_time: end, break_min: breakMin, work_min: workMin, memo: row.memo };
     });
 
     const btn = document.getElementById('gcal-import-btn');
@@ -937,19 +946,6 @@
       return `${h}時間${m > 0 ? m + '分' : ''}`;
     };
 
-    const rows = records.map(r => {
-      const hrs = (r.work_min || 0) / 60;
-      const amt = Math.floor(hrs * rate);
-      return `<tr>
-        <td>${escHtml(r.date)}</td>
-        <td>${escHtml(r.start_time || '–')}</td>
-        <td>${escHtml(r.end_time || '–')}</td>
-        <td class="num">${fmtMin(r.work_min || 0)}</td>
-        <td class="num">¥${fmtMoney(rate)}</td>
-        <td class="num">¥${fmtMoney(amt)}</td>
-      </tr>`;
-    }).join('');
-
     return `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -970,10 +966,9 @@
   .stamp{width:72px;height:72px;border:2px solid #bbb;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:11px;margin:10px 0 0 auto}
   .period-bar{background:#ebf8ff;border:1px solid #bee3f8;border-radius:8px;padding:10px 16px;margin-bottom:24px;display:flex;align-items:center;flex-wrap:wrap;gap:8px 24px;font-size:12.5px;color:#2b6cb0}
   .period-bar strong{font-size:13px}
-  table.detail{width:100%;border-collapse:collapse;margin-bottom:20px}
-  table.detail thead th{background:#2b6cb0;color:white;padding:9px 12px;font-size:12.5px;font-weight:600}
-  table.detail tbody td{padding:9px 12px;border-bottom:1px solid #e2e8f0;font-size:12.5px}
-  table.detail tbody tr:nth-child(even){background:#f7fafc}
+  table.work{width:100%;border-collapse:collapse;margin-bottom:20px}
+  table.work thead th{background:#2b6cb0;color:white;padding:9px 14px;font-size:12.5px;font-weight:600}
+  table.work tbody td{padding:11px 14px;border-bottom:1px solid #e2e8f0;font-size:13px}
   .num{text-align:right;font-variant-numeric:tabular-nums}
   .summary-wrap{display:flex;justify-content:flex-end;margin-bottom:32px}
   table.summary{width:320px;border-collapse:collapse}
@@ -1002,11 +997,18 @@
 <div class="period-bar">
   <span><strong>請求期間：</strong>${fmtDate(from)} 〜 ${fmtDate(to)}</span>
   <span><strong>作業日数：</strong>${records.length} 日</span>
-  <span><strong>総労働時間：</strong>${fmtMin(totalMin)}（${totalHrs.toFixed(2)}h）</span>
+  <span><strong>総稼働時間：</strong>${fmtMin(totalMin)}（${totalHrs.toFixed(2)}h）</span>
 </div>
-<table class="detail">
-  <thead><tr><th>日付</th><th>出勤</th><th>退勤</th><th class="num">労働時間</th><th class="num">時給単価</th><th class="num">金額</th></tr></thead>
-  <tbody>${rows}</tbody>
+<table class="work">
+  <thead><tr><th>項目</th><th class="num">稼働時間</th><th class="num">時給単価</th><th class="num">金額</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>業務委託費（${fmtDate(from)} 〜 ${fmtDate(to)}）</td>
+      <td class="num">${fmtMin(totalMin)}（${totalHrs.toFixed(2)}h）</td>
+      <td class="num">¥${fmtMoney(rate)} / h</td>
+      <td class="num">¥${fmtMoney(subtotal)}</td>
+    </tr>
+  </tbody>
 </table>
 <div class="summary-wrap">
   <table class="summary">
