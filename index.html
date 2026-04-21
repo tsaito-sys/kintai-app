@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>勤怠管理</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -170,6 +171,58 @@
     }
     .toast.show { opacity: 1; }
     .toast.error { background: #c53030; }
+
+    /* ─── Google Calendar ─── */
+    .btn-google {
+      background: white;
+      color: #3c4043;
+      border: 1px solid #dadce0;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-google:hover:not(:disabled) { background: #f8f9fa; }
+    .btn-google.signed-in { background: #e6f4ea; border-color: #34a853; color: #276749; }
+    .gcal-settings summary {
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #4a5568;
+      padding: 6px 0;
+      user-select: none;
+    }
+    .gcal-settings summary:hover { color: #2b6cb0; }
+    .gcal-settings details[open] summary { margin-bottom: 10px; }
+    .gcal-hint {
+      font-size: 0.72rem;
+      color: #718096;
+      margin-top: 4px;
+      line-height: 1.5;
+    }
+    .gcal-preview-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .gcal-preview-header label {
+      font-size: 0.8rem;
+      color: #4a5568;
+    }
+    .gcal-import-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+    .gcal-import-row .form-group {
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+    }
+    .gcal-import-row label { white-space: nowrap; }
+    .gcal-import-row input[type=number] { width: 80px; }
   </style>
 </head>
 <body>
@@ -218,6 +271,73 @@
     <div class="btn-row">
       <button class="btn btn-primary" id="btn-save" onclick="saveRecord()" disabled>保存する</button>
       <button class="btn btn-secondary" onclick="clearForm()">クリア</button>
+    </div>
+  </div>
+
+  <!-- Googleカレンダー連携 -->
+  <div class="card">
+    <h2>Googleカレンダー連携</h2>
+
+    <div class="gcal-settings">
+      <details>
+        <summary>設定（Google OAuth クライアントID）</summary>
+        <div class="form-group">
+          <label for="gcal-client-id">クライアントID</label>
+          <input type="text" id="gcal-client-id" placeholder="xxxxxxxxxx.apps.googleusercontent.com" />
+          <p class="gcal-hint">
+            Google Cloud Console → APIとサービス → 認証情報 → OAuthクライアントID（Webアプリケーション）で取得できます。<br>
+            「承認済みのJavaScriptオリジン」にこのページのURL（例: <code>http://localhost</code> または <code>file://</code> の場合は <code>http://localhost</code>）を登録してください。
+          </p>
+        </div>
+      </details>
+    </div>
+
+    <div class="filter-row" style="margin-top:14px">
+      <div class="form-group">
+        <label>開始日</label>
+        <input type="date" id="gcal-from" />
+      </div>
+      <div class="form-group">
+        <label>終了日</label>
+        <input type="date" id="gcal-to" />
+      </div>
+      <button class="btn btn-google" id="gcal-signin-btn" onclick="gcalSignIn()">
+        <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.4 30.2 0 24 0 14.6 0 6.5 5.5 2.7 13.5l7.9 6.1C12.4 13.3 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 6.9-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.6 28.4A14.5 14.5 0 0 1 9.5 24c0-1.5.3-3 .7-4.4l-7.9-6.1A23.8 23.8 0 0 0 0 24c0 3.9.9 7.5 2.7 10.7l7.9-6.3z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.2-7.7 2.2-6.2 0-11.5-4.2-13.4-9.8l-7.9 6.1C6.5 42.5 14.6 48 24 48z"/></svg>
+        Googleでサインイン
+      </button>
+      <button class="btn btn-primary" id="gcal-fetch-btn" onclick="fetchGcalEvents()" disabled>カレンダーを取得</button>
+    </div>
+
+    <!-- プレビュー -->
+    <div id="gcal-preview" style="display:none; margin-top:16px">
+      <div class="gcal-preview-header">
+        <label style="font-weight:600">取得したイベント（チェックした日程を取り込みます）</label>
+        <label style="cursor:pointer;gap:6px;display:flex;align-items:center">
+          <input type="checkbox" id="gcal-check-all" checked onchange="toggleAllGcal(this.checked)"> 全選択
+        </label>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:36px"></th>
+              <th>日付</th>
+              <th>出勤（最早）</th>
+              <th>退勤（最遅）</th>
+              <th>イベント</th>
+            </tr>
+          </thead>
+          <tbody id="gcal-preview-body"></tbody>
+        </table>
+      </div>
+      <div class="gcal-import-row">
+        <div class="form-group">
+          <label for="gcal-break">休憩時間</label>
+          <input type="number" id="gcal-break" min="0" max="480" value="60" />
+          <span style="font-size:0.85rem;color:#4a5568">分</span>
+        </div>
+        <button class="btn btn-primary" id="gcal-import-btn" onclick="importGcalRecords()">選択した日程を取り込む</button>
+      </div>
     </div>
   </div>
 
@@ -501,6 +621,204 @@
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  // ─── Google Calendar 連携 ────────────────────────────────────
+  let gcalTokenClient = null;
+  let gcalAccessToken = null;
+  let gcalPreviewData = [];
+
+  (function gcalInit() {
+    const saved = localStorage.getItem('gcal_client_id');
+    if (saved) document.getElementById('gcal-client-id').value = saved;
+
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toLocaleDateString('sv');
+    const today = now.toLocaleDateString('sv');
+    document.getElementById('gcal-from').value = firstDay;
+    document.getElementById('gcal-to').value = today;
+  })();
+
+  function gcalSignIn() {
+    const clientId = document.getElementById('gcal-client-id').value.trim();
+    if (!clientId) {
+      // Open settings details if closed
+      document.querySelector('.gcal-settings details').open = true;
+      showToast('クライアントIDを入力してください', true);
+      return;
+    }
+    if (typeof google === 'undefined' || !google.accounts) {
+      showToast('Google APIの読み込み中です。少し待ってから再試行してください', true);
+      return;
+    }
+    localStorage.setItem('gcal_client_id', clientId);
+
+    gcalTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: 'https://www.googleapis.com/auth/calendar.readonly',
+      callback: (resp) => {
+        if (resp.error) {
+          showToast('Google認証エラー: ' + resp.error, true);
+          return;
+        }
+        gcalAccessToken = resp.access_token;
+        const btn = document.getElementById('gcal-signin-btn');
+        btn.textContent = '';
+        btn.insertAdjacentHTML('afterbegin', `
+          <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.4 30.2 0 24 0 14.6 0 6.5 5.5 2.7 13.5l7.9 6.1C12.4 13.3 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 6.9-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.6 28.4A14.5 14.5 0 0 1 9.5 24c0-1.5.3-3 .7-4.4l-7.9-6.1A23.8 23.8 0 0 0 0 24c0 3.9.9 7.5 2.7 10.7l7.9-6.3z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.2-7.7 2.2-6.2 0-11.5-4.2-13.4-9.8l-7.9 6.1C6.5 42.5 14.6 48 24 48z"/></svg>
+          サインイン済み ✓`);
+        btn.classList.add('signed-in');
+        document.getElementById('gcal-fetch-btn').disabled = false;
+        showToast('Googleアカウントに接続しました');
+      }
+    });
+    gcalTokenClient.requestAccessToken();
+  }
+
+  async function fetchGcalEvents() {
+    if (!gcalAccessToken) { showToast('先にGoogleでサインインしてください', true); return; }
+
+    const from = document.getElementById('gcal-from').value;
+    const to   = document.getElementById('gcal-to').value;
+    if (!from || !to) { showToast('取得する期間を指定してください', true); return; }
+    if (from > to)    { showToast('開始日は終了日より前にしてください', true); return; }
+
+    const btn = document.getElementById('gcal-fetch-btn');
+    btn.disabled = true;
+    btn.textContent = '取得中...';
+
+    try {
+      const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+      url.searchParams.set('timeMin',      from + 'T00:00:00+09:00');
+      url.searchParams.set('timeMax',      to   + 'T23:59:59+09:00');
+      url.searchParams.set('singleEvents', 'true');
+      url.searchParams.set('orderBy',      'startTime');
+      url.searchParams.set('maxResults',   '500');
+
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: 'Bearer ' + gcalAccessToken }
+      });
+
+      if (res.status === 401) {
+        gcalAccessToken = null;
+        const signinBtn = document.getElementById('gcal-signin-btn');
+        signinBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.4 30.2 0 24 0 14.6 0 6.5 5.5 2.7 13.5l7.9 6.1C12.4 13.3 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 6.9-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.6 28.4A14.5 14.5 0 0 1 9.5 24c0-1.5.3-3 .7-4.4l-7.9-6.1A23.8 23.8 0 0 0 0 24c0 3.9.9 7.5 2.7 10.7l7.9-6.3z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.2-7.7 2.2-6.2 0-11.5-4.2-13.4-9.8l-7.9 6.1C6.5 42.5 14.6 48 24 48z"/></svg> Googleでサインイン`;
+        signinBtn.classList.remove('signed-in');
+        document.getElementById('gcal-fetch-btn').disabled = true;
+        showToast('セッションが切れました。再度サインインしてください', true);
+        return;
+      }
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error?.message || `HTTPエラー ${res.status}`);
+      }
+
+      const data   = await res.json();
+      const events = (data.items || []).filter(e => e.start?.dateTime);
+
+      // 日ごとにグループ化して最早出勤・最遅退勤を算出
+      const byDay = {};
+      for (const ev of events) {
+        const date = toJSTDate(ev.start.dateTime);
+        if (!byDay[date]) byDay[date] = { starts: [], ends: [], titles: [] };
+        byDay[date].starts.push(toJSTTime(ev.start.dateTime));
+        byDay[date].ends.push(toJSTTime(ev.end.dateTime));
+        byDay[date].titles.push(ev.summary || '(タイトルなし)');
+      }
+
+      gcalPreviewData = Object.entries(byDay).sort(([a], [b]) => a.localeCompare(b)).map(([date, d]) => ({
+        date,
+        start: d.starts.sort()[0],
+        end:   d.ends.sort().reverse()[0],
+        memo:  d.titles.join(' / ')
+      }));
+
+      renderGcalPreview();
+      showToast(gcalPreviewData.length ? `${gcalPreviewData.length}日分のイベントを取得しました` : 'イベントが見つかりませんでした');
+
+    } catch (e) {
+      showToast('取得失敗: ' + e.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'カレンダーを取得';
+    }
+  }
+
+  function toJSTDate(dateTimeStr) {
+    return new Date(dateTimeStr).toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
+  }
+
+  function toJSTTime(dateTimeStr) {
+    return new Date(dateTimeStr).toLocaleTimeString('ja-JP', {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Tokyo'
+    });
+  }
+
+  function renderGcalPreview() {
+    const preview = document.getElementById('gcal-preview');
+    const tbody   = document.getElementById('gcal-preview-body');
+
+    if (!gcalPreviewData.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#a0aec0">イベントが見つかりませんでした</td></tr>';
+      preview.style.display = '';
+      return;
+    }
+
+    tbody.innerHTML = gcalPreviewData.map((row, i) => `
+      <tr>
+        <td><input type="checkbox" class="gcal-row-check" data-idx="${i}" checked></td>
+        <td>${escHtml(row.date)}</td>
+        <td>${escHtml(row.start)}</td>
+        <td>${escHtml(row.end)}</td>
+        <td class="memo-cell">${escHtml(row.memo)}</td>
+      </tr>
+    `).join('');
+
+    document.getElementById('gcal-check-all').checked = true;
+    preview.style.display = '';
+  }
+
+  function toggleAllGcal(checked) {
+    document.querySelectorAll('.gcal-row-check').forEach(cb => cb.checked = checked);
+    document.getElementById('gcal-check-all').checked = checked;
+  }
+
+  async function importGcalRecords() {
+    if (!sb) { showToast('Supabaseに接続されていません', true); return; }
+
+    const checks = Array.from(document.querySelectorAll('.gcal-row-check:checked'));
+    if (!checks.length) { showToast('取り込む日程を選択してください', true); return; }
+
+    const breakMin = parseInt(document.getElementById('gcal-break').value) || 0;
+    const selected = checks.map(cb => gcalPreviewData[parseInt(cb.dataset.idx)]);
+
+    const rows = selected.map(row => {
+      const [sh, sm] = row.start.split(':').map(Number);
+      const [eh, em] = row.end.split(':').map(Number);
+      let workMin = (eh * 60 + em) - (sh * 60 + sm) - breakMin;
+      if (workMin < 0) workMin = 0;
+      return { date: row.date, start_time: row.start, end_time: row.end, break_min: breakMin, work_min: workMin, memo: row.memo };
+    });
+
+    const btn = document.getElementById('gcal-import-btn');
+    btn.disabled = true;
+    btn.textContent = '取り込み中...';
+
+    const { error } = await sb.from(TABLE).insert(rows);
+
+    btn.disabled = false;
+    btn.textContent = '選択した日程を取り込む';
+
+    if (error) {
+      showToast('取り込み失敗: ' + error.message, true);
+    } else {
+      showToast(`${rows.length}件を取り込みました`);
+      document.getElementById('gcal-preview').style.display = 'none';
+      gcalPreviewData = [];
+      loadRecords();
+    }
+  }
+
+  // ─── ユーティリティ ────────────────────────────────────────
   let toastTimer;
   function showToast(msg, isError = false, duration = 3500) {
     const t = document.getElementById('toast');
