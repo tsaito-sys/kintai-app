@@ -1194,7 +1194,7 @@
 
   .inv-parties{display:flex;justify-content:space-between;gap:24px;margin-bottom:28px}
   .inv-left{flex:1}
-  .inv-right{min-width:210px;max-width:230px;font-size:13px;color:#444;line-height:2;text-align:right;white-space:nowrap}
+  .inv-right{min-width:210px;max-width:230px;font-size:13px;color:#444;line-height:2;text-align:right}
 
   .inv-client-name{font-size:18px;font-weight:700;border-bottom:2px solid #222;padding-bottom:3px;display:inline-block;margin-bottom:14px}
   .inv-msg{font-size:13.5px;color:#555;margin-bottom:14px}
@@ -1219,7 +1219,7 @@
   table.sum .r{text-align:right;font-variant-numeric:tabular-nums}
   table.sum .tot td{background:#f0f0f0;color:#222;font-weight:700;font-size:15px;border:1px solid #ccc;padding:9px 12px}
 
-  .inv-notes{margin-top:4px;border-top:1px solid #e2e8f0;padding-top:16px}
+  .inv-notes{margin-top:4px;padding-top:16px}
   .inv-note-sec{margin-bottom:20px}
   .inv-note-sec h3{font-size:12.5px;font-weight:700;color:#555;border-bottom:1px solid #e2e8f0;padding-bottom:4px;margin-bottom:8px}
   .inv-note-sec p{font-size:13px;color:#444;white-space:pre-wrap;line-height:1.8}
@@ -1227,8 +1227,8 @@
   @media print{
     .toolbar{display:none}
     @page{margin:5mm 10mm}
-    #inv-outer{max-width:100%;width:100%;margin:0}
-    #inv{padding:10px 20px}
+    #inv-outer{max-width:100%;width:100%;margin:0;min-height:calc(297mm - 10mm);display:flex;flex-direction:column}
+    #inv{padding:10px 20px;flex:1}
   }
 </style>
 </head>
@@ -1307,8 +1307,8 @@ function dlPDF(){
   // PDF用にコンパクトなスタイルを一時適用（印刷設定と同等）
   const prevOuter = outer.style.cssText;
   const prevPad   = inner.style.padding;
-  outer.style.cssText = 'max-width:100%;width:100%;margin:0;border-top:7.5px solid #000;border-bottom:7.5px solid #000';
-  inner.style.padding = '10px 20px';
+  outer.style.cssText = 'max-width:100%;width:100%;margin:0;border-top:7.5px solid #000;border-bottom:7.5px solid #000;min-height:287mm;display:flex;flex-direction:column';
+  inner.style.cssText = 'padding:10px 20px;flex:1';
 
   html2pdf().set({
     margin:[5,10],
@@ -1317,7 +1317,7 @@ function dlPDF(){
     jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
   }).from(outer).save().then(()=>{
     outer.style.cssText = prevOuter;
-    inner.style.padding = prevPad;
+    inner.style.cssText = prevPad ? 'padding:'+prevPad : '';
   });
 }
 <\/script>
