@@ -388,6 +388,10 @@
         <input type="text" id="inv-client" placeholder="例）株式会社〇〇" />
       </div>
       <div class="form-group">
+        <label for="inv-invno">請求書番号</label>
+        <input type="text" id="inv-invno" placeholder="例）202504-001" />
+      </div>
+      <div class="form-group">
         <label for="inv-date">請求日</label>
         <input type="date" id="inv-date" />
       </div>
@@ -1056,6 +1060,7 @@
 
   // ─── 請求書作成 ───────────────────────────────────────────
   const INV_SETTINGS_MAP = {
+    invNo: 'inv-invno',
     issuer: 'inv-issuer', client: 'inv-client', rate: 'inv-rate', taxRate: 'inv-tax',
     zip: 'inv-zip', address: 'inv-address', tel: 'inv-tel', email: 'inv-email',
     invoiceReg: 'inv-invoice-reg',
@@ -1143,7 +1148,7 @@
     const subtotal = Math.floor(totalHrs * rate);
     const tax      = Math.floor(subtotal * taxRate / 100);
     const total    = subtotal + tax;
-    const invNo    = invDate.replace(/-/g, '').substring(0, 6) + '-001';
+    const invNo    = g('inv-invno') || (invDate.replace(/-/g, '').substring(0, 6) + '-001');
 
     const html = buildInvoiceHTML({
       invNo, client, issuer, invDate, dueDate, from, to,
@@ -1194,7 +1199,7 @@
 
   .inv-parties{display:flex;justify-content:space-between;gap:24px;margin-bottom:28px}
   .inv-left{flex:1}
-  .inv-right{min-width:210px;max-width:230px;font-size:13px;color:#444;line-height:2;text-align:right}
+  .inv-right{min-width:210px;max-width:230px;font-size:13px;color:#444;line-height:2;text-align:right;letter-spacing:0}
 
   .inv-client-name{font-size:18px;font-weight:700;border-bottom:2px solid #333;padding-bottom:3px;display:inline-block;margin-bottom:14px}
   .inv-msg{font-size:13.5px;color:#555;margin-bottom:30px}
