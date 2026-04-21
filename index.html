@@ -662,7 +662,7 @@
     const from = document.getElementById('filter-from').value;
     const to = document.getElementById('filter-to').value;
 
-    let query = sb.from(TABLE).select('*').order('date', { ascending: false });
+    let query = sb.from(TABLE).select('*').order('date', { ascending: true });
     if (from) query = query.gte('date', from);
     if (to)   query = query.lte('date', to);
 
@@ -811,6 +811,22 @@
   let gcalAccessToken = null;
   let gcalPreviewData = [];
 
+  const GCAL_SVG = `<svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.4 30.2 0 24 0 14.6 0 6.5 5.5 2.7 13.5l7.9 6.1C12.4 13.3 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 6.9-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.6 28.4A14.5 14.5 0 0 1 9.5 24c0-1.5.3-3 .7-4.4l-7.9-6.1A23.8 23.8 0 0 0 0 24c0 3.9.9 7.5 2.7 10.7l7.9-6.3z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.2-7.7 2.2-6.2 0-11.5-4.2-13.4-9.8l-7.9 6.1C6.5 42.5 14.6 48 24 48z"/></svg>`;
+
+  function applySignedInUI() {
+    const btn = document.getElementById('gcal-signin-btn');
+    btn.innerHTML = GCAL_SVG + ' サインイン済み ✓';
+    btn.classList.add('signed-in');
+    document.getElementById('gcal-fetch-btn').disabled = false;
+  }
+
+  function clearSignedInUI() {
+    const btn = document.getElementById('gcal-signin-btn');
+    btn.innerHTML = GCAL_SVG + ' Googleでサインイン';
+    btn.classList.remove('signed-in');
+    document.getElementById('gcal-fetch-btn').disabled = true;
+  }
+
   (function gcalInit() {
     const saved = localStorage.getItem('gcal_client_id');
     if (saved) document.getElementById('gcal-client-id').value = saved;
@@ -820,6 +836,15 @@
     const today = now.toLocaleDateString('sv');
     document.getElementById('gcal-from').value = firstDay;
     document.getElementById('gcal-to').value = today;
+
+    // 保存済みトークンを復元
+    try {
+      const td = JSON.parse(sessionStorage.getItem('gcal_token_data') || 'null');
+      if (td && td.expiry > Date.now()) {
+        gcalAccessToken = td.token;
+        applySignedInUI();
+      }
+    } catch (e) {}
   })();
 
   function saveGcalClientId() {
@@ -853,13 +878,12 @@
           return;
         }
         gcalAccessToken = resp.access_token;
-        const btn = document.getElementById('gcal-signin-btn');
-        btn.textContent = '';
-        btn.insertAdjacentHTML('afterbegin', `
-          <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.4 30.2 0 24 0 14.6 0 6.5 5.5 2.7 13.5l7.9 6.1C12.4 13.3 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 6.9-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.6 28.4A14.5 14.5 0 0 1 9.5 24c0-1.5.3-3 .7-4.4l-7.9-6.1A23.8 23.8 0 0 0 0 24c0 3.9.9 7.5 2.7 10.7l7.9-6.3z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.2-7.7 2.2-6.2 0-11.5-4.2-13.4-9.8l-7.9 6.1C6.5 42.5 14.6 48 24 48z"/></svg>
-          サインイン済み ✓`);
-        btn.classList.add('signed-in');
-        document.getElementById('gcal-fetch-btn').disabled = false;
+        // トークンをsessionStorageに保存（約1時間有効）
+        sessionStorage.setItem('gcal_token_data', JSON.stringify({
+          token: resp.access_token,
+          expiry: Date.now() + 3500 * 1000
+        }));
+        applySignedInUI();
         showToast('Googleアカウントに接続しました');
       }
     });
@@ -892,10 +916,8 @@
 
       if (res.status === 401) {
         gcalAccessToken = null;
-        const signinBtn = document.getElementById('gcal-signin-btn');
-        signinBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.4 30.2 0 24 0 14.6 0 6.5 5.5 2.7 13.5l7.9 6.1C12.4 13.3 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 6.9-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.6 28.4A14.5 14.5 0 0 1 9.5 24c0-1.5.3-3 .7-4.4l-7.9-6.1A23.8 23.8 0 0 0 0 24c0 3.9.9 7.5 2.7 10.7l7.9-6.3z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.2-7.7 2.2-6.2 0-11.5-4.2-13.4-9.8l-7.9 6.1C6.5 42.5 14.6 48 24 48z"/></svg> Googleでサインイン`;
-        signinBtn.classList.remove('signed-in');
-        document.getElementById('gcal-fetch-btn').disabled = true;
+        sessionStorage.removeItem('gcal_token_data');
+        clearSignedInUI();
         showToast('セッションが切れました。再度サインインしてください', true);
         return;
       }
@@ -1014,6 +1036,9 @@
     btn.disabled = true;
     btn.textContent = '取り込み中...';
 
+    // 同じ日付の既存データを削除してから挿入（上書き）
+    const dates = rows.map(r => r.date);
+    await sb.from(TABLE).delete().in('date', dates);
     const { error } = await sb.from(TABLE).insert(rows);
 
     btn.disabled = false;
@@ -1030,16 +1055,26 @@
   }
 
   // ─── 請求書作成 ───────────────────────────────────────────
+  const INV_SETTINGS_MAP = {
+    issuer: 'inv-issuer', client: 'inv-client', rate: 'inv-rate', taxRate: 'inv-tax',
+    zip: 'inv-zip', address: 'inv-address', tel: 'inv-tel', email: 'inv-email',
+    invoiceReg: 'inv-invoice-reg',
+    bank: 'inv-bank', branch: 'inv-branch', branchNo: 'inv-branch-no',
+    accountType: 'inv-account-type', accountNo: 'inv-account-no', accountName: 'inv-account-name'
+  };
+
+  function saveInvoiceSettingsToStorage() {
+    const s = {};
+    for (const [key, id] of Object.entries(INV_SETTINGS_MAP)) {
+      const el = document.getElementById(id);
+      if (el) s[key] = el.value;
+    }
+    localStorage.setItem('invoice_settings', JSON.stringify(s));
+  }
+
   (function loadInvoiceSettings() {
     const s = JSON.parse(localStorage.getItem('invoice_settings') || '{}');
-    const map = {
-      issuer: 'inv-issuer', client: 'inv-client', rate: 'inv-rate', taxRate: 'inv-tax',
-      zip: 'inv-zip', address: 'inv-address', tel: 'inv-tel', email: 'inv-email',
-      invoiceReg: 'inv-invoice-reg', note: 'inv-note',
-      bank: 'inv-bank', branch: 'inv-branch', branchNo: 'inv-branch-no',
-      accountType: 'inv-account-type', accountNo: 'inv-account-no', accountName: 'inv-account-name'
-    };
-    for (const [key, id] of Object.entries(map)) {
+    for (const [key, id] of Object.entries(INV_SETTINGS_MAP)) {
       if (s[key] != null) { const el = document.getElementById(id); if (el) el.value = s[key]; }
     }
     const now      = new Date();
@@ -1050,6 +1085,12 @@
     document.getElementById('inv-due-date').value = s.dueDate || dueDay;
     document.getElementById('inv-from').value     = firstDay;
     document.getElementById('inv-to').value       = lastDay;
+
+    // 入力変更時に自動保存
+    for (const id of Object.values(INV_SETTINGS_MAP)) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', saveInvoiceSettingsToStorage);
+    }
   })();
 
   async function generateInvoice() {
