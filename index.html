@@ -388,8 +388,12 @@
         <input type="text" id="inv-client" placeholder="例）株式会社〇〇" />
       </div>
       <div class="form-group">
-        <label for="inv-invno">請求書番号</label>
-        <input type="text" id="inv-invno" placeholder="例）202504-001" />
+        <label for="inv-invno-seq">請求書番号</label>
+        <div style="display:flex;align-items:stretch">
+          <span id="inv-invno-prefix" style="padding:9px 10px;border:1px solid #cbd5e0;border-right:none;border-radius:8px 0 0 8px;font-size:0.9rem;background:#edf2f7;color:#4a5568;white-space:nowrap;display:flex;align-items:center"></span>
+          <span style="padding:9px 2px;border-top:1px solid #cbd5e0;border-bottom:1px solid #cbd5e0;background:#edf2f7;font-size:0.9rem;color:#4a5568;display:flex;align-items:center">-</span>
+          <input type="text" id="inv-invno-seq" style="width:70px;border-radius:0 8px 8px 0" maxlength="10" placeholder="001" />
+        </div>
       </div>
       <div class="form-group">
         <label for="inv-date">請求日</label>
@@ -417,7 +421,7 @@
       </div>
       <div class="form-group full">
         <label for="inv-note">備考</label>
-        <textarea id="inv-note" placeholder="例）いつもお世話になっております。来月度も宜しくお願いいたします。" style="min-height:60px"></textarea>
+        <textarea id="inv-note" placeholder="例）いつもお世話になっております。来月度もよろしくお願いいたします。" style="min-height:60px"></textarea>
       </div>
     </div>
 
@@ -1060,7 +1064,7 @@
 
   // ─── 請求書作成 ───────────────────────────────────────────
   const INV_SETTINGS_MAP = {
-    invNo: 'inv-invno',
+    invNoSeq: 'inv-invno-seq',
     issuer: 'inv-issuer', client: 'inv-client', rate: 'inv-rate', taxRate: 'inv-tax',
     zip: 'inv-zip', address: 'inv-address', tel: 'inv-tel', email: 'inv-email',
     invoiceReg: 'inv-invoice-reg',
@@ -1077,6 +1081,12 @@
     localStorage.setItem('invoice_settings', JSON.stringify(s));
   }
 
+  function updateInvNoPrefix() {
+    const fromVal = document.getElementById('inv-from').value;
+    const prefix = fromVal ? fromVal.replace(/-/g, '').substring(0, 6) : '';
+    document.getElementById('inv-invno-prefix').textContent = prefix;
+  }
+
   (function loadInvoiceSettings() {
     const s = JSON.parse(localStorage.getItem('invoice_settings') || '{}');
     for (const [key, id] of Object.entries(INV_SETTINGS_MAP)) {
@@ -1090,6 +1100,8 @@
     document.getElementById('inv-due-date').value = s.dueDate || dueDay;
     document.getElementById('inv-from').value     = firstDay;
     document.getElementById('inv-to').value       = lastDay;
+    updateInvNoPrefix();
+    document.getElementById('inv-from').addEventListener('change', updateInvNoPrefix);
 
     // 入力変更時に自動保存
     for (const id of Object.values(INV_SETTINGS_MAP)) {
@@ -1148,7 +1160,9 @@
     const subtotal = Math.floor(totalHrs * rate);
     const tax      = Math.floor(subtotal * taxRate / 100);
     const total    = subtotal + tax;
-    const invNo    = g('inv-invno') || (invDate.replace(/-/g, '').substring(0, 6) + '-001');
+    const invNoPrefix = document.getElementById('inv-invno-prefix').textContent.trim() || invDate.replace(/-/g, '').substring(0, 6);
+    const invNoSeq    = g('inv-invno-seq') || '001';
+    const invNo       = invNoPrefix + '-' + invNoSeq;
 
     const html = buildInvoiceHTML({
       invNo, client, issuer, invDate, dueDate, from, to,
@@ -1268,7 +1282,7 @@
     </div>
     <div class="inv-right">
       <div class="issuer-name">${h(issuer)}</div>
-      ${zip     ? `<div>〒${h(zip)}</div>` : ''}
+      ${zip     ? `<div style="margin-top:8px">〒${h(zip)}</div>` : ''}
       ${address ? `<div style="white-space:nowrap;letter-spacing:0;text-align:right">${h(address)}</div>` : ''}
       ${tel        ? `<div>TEL：${h(tel)}</div>` : ''}
       ${email      ? `<div>${h(email)}</div>` : ''}
