@@ -294,100 +294,102 @@
 
 <div class="container">
 
-  <!-- 上部: 2カラム -->
-  <div class="top-cols">
+  <!-- 上部: 1枠・2カラム -->
+  <div class="card" style="margin-bottom:20px">
+    <div class="top-cols">
 
-    <!-- 左: Googleカレンダー連携 -->
-    <div class="card">
-      <h2>Googleカレンダー連携</h2>
+      <!-- 左: 稼働予定の一括登録 -->
+      <div>
+        <h2 style="font-size:1rem;font-weight:700;color:#2b6cb0;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #bee3f8">稼働予定の一括登録</h2>
+        <p class="cal-hint" style="margin-bottom:10px">日付をクリックして選択し、「稼働予定を追加」でGoogleカレンダーに9:00〜17:00の予定を一括登録します。土日・祝日は選択できません。</p>
+        <div class="sched-cal-nav">
+          <button onclick="calPrev()">◀</button>
+          <span id="cal-title"></span>
+          <button onclick="calNext()">▶</button>
+        </div>
+        <div id="cal-grid" class="cal-grid"></div>
+        <div class="cal-footer">
+          <span id="cal-selected-count" class="cal-hint">0日選択中</span>
+          <button class="btn btn-primary" id="cal-register-btn" onclick="registerSchedule()">稼働予定を追加</button>
+          <button class="btn" style="background:#f7fafc;border:1px solid #cbd5e0;color:#4a5568" onclick="selectedDates.clear();renderCalendar()">選択解除</button>
+        </div>
+        <p id="cal-holiday-status" class="cal-hint" style="margin-top:6px"></p>
+      </div>
 
-      <div class="gcal-settings">
-        <details>
-          <summary>設定（Google OAuth クライアントID）</summary>
-          <div class="form-group">
-            <label for="gcal-client-id">クライアントID</label>
-            <input type="text" id="gcal-client-id" placeholder="xxxxxxxxxx.apps.googleusercontent.com" />
-            <p class="gcal-hint">
-              Google Cloud Console → APIとサービス → 認証情報 → OAuthクライアントID（Webアプリケーション）で取得できます。<br>
-              「承認済みのJavaScriptオリジン」にこのページのURLを登録してください。
-            </p>
-            <div class="btn-row" style="margin-top:10px">
-              <button class="btn btn-primary" onclick="saveGcalClientId()">クライアントIDを保存</button>
+      <!-- 右: Googleカレンダー連携 -->
+      <div style="border-left:1px solid #e2e8f0;padding-left:20px">
+        <h2 style="font-size:1rem;font-weight:700;color:#2b6cb0;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #bee3f8">Googleカレンダー連携</h2>
+
+        <div class="gcal-settings">
+          <details>
+            <summary>設定（Google OAuth クライアントID）</summary>
+            <div class="form-group">
+              <label for="gcal-client-id">クライアントID</label>
+              <input type="text" id="gcal-client-id" placeholder="xxxxxxxxxx.apps.googleusercontent.com" />
+              <p class="gcal-hint">
+                Google Cloud Console → APIとサービス → 認証情報 → OAuthクライアントID（Webアプリケーション）で取得できます。<br>
+                「承認済みのJavaScriptオリジン」にこのページのURLを登録してください。
+              </p>
+              <div class="btn-row" style="margin-top:10px">
+                <button class="btn btn-primary" onclick="saveGcalClientId()">クライアントIDを保存</button>
+              </div>
             </div>
+          </details>
+        </div>
+
+        <div class="gcal-vert">
+          <div class="form-group">
+            <label>開始日</label>
+            <input type="date" id="gcal-from" />
           </div>
-        </details>
-      </div>
-
-      <div class="gcal-vert">
-        <div class="form-group">
-          <label>開始日</label>
-          <input type="date" id="gcal-from" />
-        </div>
-        <div class="form-group">
-          <label>終了日</label>
-          <input type="date" id="gcal-to" />
-        </div>
-        <button class="btn btn-google" id="gcal-signin-btn" onclick="gcalSignIn()">
-          <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.4 30.2 0 24 0 14.6 0 6.5 5.5 2.7 13.5l7.9 6.1C12.4 13.3 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 6.9-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.6 28.4A14.5 14.5 0 0 1 9.5 24c0-1.5.3-3 .7-4.4l-7.9-6.1A23.8 23.8 0 0 0 0 24c0 3.9.9 7.5 2.7 10.7l7.9-6.3z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.2-7.7 2.2-6.2 0-11.5-4.2-13.4-9.8l-7.9 6.1C6.5 42.5 14.6 48 24 48z"/></svg>
-          Googleでサインイン
-        </button>
-        <button class="btn btn-primary" id="gcal-fetch-btn" onclick="fetchGcalEvents()" disabled>カレンダーを取得</button>
-      </div>
-
-      <!-- プレビュー -->
-      <div id="gcal-preview" style="display:none; margin-top:16px">
-        <div class="gcal-preview-header">
-          <div>
-            <label style="font-weight:600">取得したイベント</label>
-            <span style="font-size:0.75rem;color:#718096;margin-left:8px">各セルを直接編集できます。休憩時間は稼働時間から自動計算されています。</span>
+          <div class="form-group">
+            <label>終了日</label>
+            <input type="date" id="gcal-to" />
           </div>
-          <label style="cursor:pointer;gap:6px;display:flex;align-items:center">
-            <input type="checkbox" id="gcal-check-all" checked onchange="toggleAllGcal(this.checked)"> 全選択
-          </label>
+          <button class="btn btn-google" id="gcal-signin-btn" onclick="gcalSignIn()">
+            <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.4 30.2 0 24 0 14.6 0 6.5 5.5 2.7 13.5l7.9 6.1C12.4 13.3 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 6.9-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.6 28.4A14.5 14.5 0 0 1 9.5 24c0-1.5.3-3 .7-4.4l-7.9-6.1A23.8 23.8 0 0 0 0 24c0 3.9.9 7.5 2.7 10.7l7.9-6.3z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.2-7.7 2.2-6.2 0-11.5-4.2-13.4-9.8l-7.9 6.1C6.5 42.5 14.6 48 24 48z"/></svg>
+            Googleでサインイン
+          </button>
+          <button class="btn btn-primary" id="gcal-fetch-btn" onclick="fetchGcalEvents()" disabled>カレンダーを取得</button>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th style="width:36px"></th>
-                <th>日付</th>
-                <th>出勤時間</th>
-                <th>退勤時間</th>
-                <th style="width:90px">休憩(分)<br><span style="font-weight:400;font-size:0.7rem;opacity:0.85">自動計算</span></th>
-                <th>メモ</th>
-              </tr>
-            </thead>
-            <tbody id="gcal-preview-body"></tbody>
-          </table>
-        </div>
-        <div style="font-size:0.72rem;color:#718096;margin-top:6px">
-          休憩自動計算ルール：3h未満→0分 ／ 3〜6h→30分 ／ 6〜8h→45分 ／ 8h以上→60分
-        </div>
-        <div class="gcal-import-row">
-          <button class="btn btn-primary" id="gcal-import-btn" onclick="importGcalRecords()">選択した日程を取り込む</button>
-        </div>
-      </div>
-    </div>
 
-    <!-- 右: 稼働予定の一括登録 -->
-    <div class="card">
-      <h2>稼働予定の一括登録</h2>
-      <p class="cal-hint" style="margin-bottom:10px">日付をクリックして選択し、「稼働予定を追加」でGoogleカレンダーに9:00〜17:00の予定を一括登録します。土日・祝日は選択できません。</p>
-      <div class="sched-cal-nav">
-        <button onclick="calPrev()">◀</button>
-        <span id="cal-title"></span>
-        <button onclick="calNext()">▶</button>
+        <!-- プレビュー -->
+        <div id="gcal-preview" style="display:none; margin-top:16px">
+          <div class="gcal-preview-header">
+            <div>
+              <label style="font-weight:600">取得したイベント</label>
+              <span style="font-size:0.75rem;color:#718096;margin-left:8px">各セルを直接編集できます。休憩時間は稼働時間から自動計算されています。</span>
+            </div>
+            <label style="cursor:pointer;gap:6px;display:flex;align-items:center">
+              <input type="checkbox" id="gcal-check-all" checked onchange="toggleAllGcal(this.checked)"> 全選択
+            </label>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:36px"></th>
+                  <th>日付</th>
+                  <th>出勤時間</th>
+                  <th>退勤時間</th>
+                  <th style="width:90px">休憩(分)<br><span style="font-weight:400;font-size:0.7rem;opacity:0.85">自動計算</span></th>
+                  <th>メモ</th>
+                </tr>
+              </thead>
+              <tbody id="gcal-preview-body"></tbody>
+            </table>
+          </div>
+          <div style="font-size:0.72rem;color:#718096;margin-top:6px">
+            休憩自動計算ルール：3h未満→0分 ／ 3〜6h→30分 ／ 6〜8h→45分 ／ 8h以上→60分
+          </div>
+          <div class="gcal-import-row">
+            <button class="btn btn-primary" id="gcal-import-btn" onclick="importGcalRecords()">選択した日程を取り込む</button>
+          </div>
+        </div>
       </div>
-      <div id="cal-grid" class="cal-grid"></div>
-      <div class="cal-footer">
-        <span id="cal-selected-count" class="cal-hint">0日選択中</span>
-        <button class="btn btn-primary" id="cal-register-btn" onclick="registerSchedule()">稼働予定を追加</button>
-        <button class="btn" style="background:#f7fafc;border:1px solid #cbd5e0;color:#4a5568" onclick="selectedDates.clear();renderCalendar()">選択解除</button>
-      </div>
-      <p id="cal-holiday-status" class="cal-hint" style="margin-top:6px"></p>
-    </div>
 
-  </div><!-- /.top-cols -->
+    </div>
+  </div>
 
   <!-- 中部: 勤怠一覧 -->
   <div class="card">
