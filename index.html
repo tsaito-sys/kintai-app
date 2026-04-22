@@ -737,6 +737,9 @@
       showToast('更新失敗: ' + error.message, true);
     } else {
       tr.querySelector('.work-time').textContent = formatMin(workMin);
+      const rec = records.find(r => r.id === id);
+      if (rec) { rec.date = date; rec.start_time = start || null; rec.end_time = end || null; rec.break_min = breakMin; rec.work_min = workMin; rec.memo = memo; }
+      renderSummary(records);
       showToast('更新しました');
     }
   }
