@@ -1282,7 +1282,7 @@
     </div>
     <div class="inv-right">
       <div class="issuer-name">${h(issuer)}</div>
-      ${zip     ? `<div style="margin-top:8px">〒${h(zip)}</div>` : ''}
+      ${zip     ? `<div style="margin-top:12px">〒${h(zip)}</div>` : ''}
       ${address ? `<div style="white-space:nowrap;letter-spacing:0;text-align:right">${h(address)}</div>` : ''}
       ${tel        ? `<div>TEL：${h(tel)}</div>` : ''}
       ${email      ? `<div>${h(email)}</div>` : ''}
@@ -1313,7 +1313,7 @@
   <div class="inv-notes">
     <div class="inv-note-sec">
       <h3>備考</h3>
-      <p>${h(note || 'いつもお世話になっております。\n来月度も宜しくお願いいたします。')}</p>
+      <p>${h(note || 'いつもお世話になっております。\n来月度もよろしくお願いいたします。')}</p>
     </div>
     <div class="inv-note-sec">
       <h3>振込先</h3>
