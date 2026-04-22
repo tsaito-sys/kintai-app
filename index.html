@@ -737,7 +737,7 @@
       showToast('更新失敗: ' + error.message, true);
     } else {
       tr.querySelector('.work-time').textContent = formatMin(workMin);
-      const rec = records.find(r => r.id === id);
+      const rec = records.find(r => String(r.id) === String(id));
       if (rec) { rec.date = date; rec.start_time = start || null; rec.end_time = end || null; rec.break_min = breakMin; rec.work_min = workMin; rec.memo = memo; }
       renderSummary(records);
       showToast('更新しました');
@@ -1285,7 +1285,7 @@
     </div>
     <div class="inv-right">
       <div class="issuer-name">${h(issuer)}</div>
-      <div style="margin-top: 12px;"></div>
+      <div style="height:12px"></div>
       ${zip     ? `<div>〒${h(zip)}</div>` : ''}
       ${address ? `<div style="white-space:nowrap;letter-spacing:0;text-align:right">${h(address)}</div>` : ''}
       ${tel        ? `<div>TEL：${h(tel)}</div>` : ''}
