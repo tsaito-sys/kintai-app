@@ -1501,8 +1501,9 @@
     .toolbar{display:none!important}
     @page{size:A4;margin:0}
     body{margin:0;padding:0}
-    #inv-outer{max-width:100%;width:100%;margin:0;border-top:19px solid #333;border-bottom:19px solid #333}
-    #inv{padding:6mm 16mm 14mm}
+    #inv-outer{max-width:100%;width:100%;margin:0;border-top:19px solid #333;border-bottom:19px solid #333;height:297mm;display:flex;flex-direction:column}
+    #inv{padding:6mm 16mm 10mm;flex:1;display:flex;flex-direction:column}
+    .inv-notes{margin-top:auto}
   }
 </style>
 </head>
