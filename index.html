@@ -1258,7 +1258,7 @@
       <td style="padding:4px 6px;border:1px solid #e2e8f0"><input type="number" class="ei-price" style="${inp};text-align:right" placeholder="0" min="0" oninput="calcExtraRow(this)"></td>
       <td style="padding:4px 6px;border:1px solid #e2e8f0;text-align:right;white-space:nowrap" class="ei-amount">¥0</td>
       <td style="padding:4px 6px;border:1px solid #e2e8f0">
-        <select class="ei-tax" style="${inp}"><option value="taxable">課税</option><option value="non">非課税</option></select>
+        <select class="ei-tax" style="${inp}" onchange="updateExtraRowTaxType(this)"><option value="taxable">課税</option><option value="non">非課税</option></select>
       </td>
       <td style="padding:4px 6px;border:1px solid #e2e8f0;text-align:center">
         <button type="button" onclick="this.closest('tr').remove()" style="background:none;border:none;color:#c53030;cursor:pointer;font-size:1.1rem;line-height:1">×</button>
@@ -1267,11 +1267,24 @@
     tbody.appendChild(tr);
   }
 
+  function updateExtraRowTaxType(select) {
+    const tr = select.closest('tr');
+    const qtyInput = tr.querySelector('.ei-qty');
+    const isTaxable = select.value === 'taxable';
+    qtyInput.disabled = !isTaxable;
+    qtyInput.style.background = isTaxable ? '#f7fafc' : '#edf2f7';
+    qtyInput.style.color = isTaxable ? '' : '#a0aec0';
+    if (!isTaxable) qtyInput.value = '';
+    calcExtraRow(tr.querySelector('.ei-price'));
+  }
+
   function calcExtraRow(input) {
     const tr = input.closest('tr');
-    const qty   = parseFloat(tr.querySelector('.ei-qty').value)   || 0;
-    const price = parseFloat(tr.querySelector('.ei-price').value) || 0;
-    tr.querySelector('.ei-amount').textContent = '¥' + Math.floor(qty * price).toLocaleString('ja-JP');
+    const taxable = tr.querySelector('.ei-tax').value === 'taxable';
+    const qty     = parseFloat(tr.querySelector('.ei-qty').value)   || 0;
+    const price   = parseFloat(tr.querySelector('.ei-price').value) || 0;
+    const amount  = taxable ? Math.floor(qty * price) : Math.floor(price);
+    tr.querySelector('.ei-amount').textContent = '¥' + amount.toLocaleString('ja-JP');
   }
 
   // ─── 請求書作成 ───────────────────────────────────────────
@@ -1374,11 +1387,11 @@
     // 追加明細を収集
     const extraItems = [];
     document.querySelectorAll('#inv-extra-rows tr').forEach(tr => {
-      const name     = tr.querySelector('.ei-name')?.value.trim() || '';
-      const qty      = parseFloat(tr.querySelector('.ei-qty')?.value)   || 0;
-      const unitPrice= parseFloat(tr.querySelector('.ei-price')?.value) || 0;
-      const amount   = Math.floor(qty * unitPrice);
-      const taxable  = tr.querySelector('.ei-tax')?.value !== 'non';
+      const name      = tr.querySelector('.ei-name')?.value.trim() || '';
+      const taxable   = tr.querySelector('.ei-tax')?.value !== 'non';
+      const qty       = taxable ? (parseFloat(tr.querySelector('.ei-qty')?.value) || 0) : null;
+      const unitPrice = parseFloat(tr.querySelector('.ei-price')?.value) || 0;
+      const amount    = taxable ? Math.floor((qty || 0) * unitPrice) : Math.floor(unitPrice);
       extraItems.push({ name, qty, unitPrice, amount, taxable });
     });
 
@@ -1423,7 +1436,7 @@
     const extraRows = (extraItems || []).map((item, i) => `
       <tr>
         <td>${h(item.name) || `品目${i + 2}`}</td>
-        <td class="r">${item.qty}</td>
+        <td class="r">${item.taxable ? item.qty : '–'}</td>
         <td class="r">¥${fm(item.unitPrice)}</td>
         <td class="r">${item.taxable ? '課税' : '非課税'}</td>
         <td class="r">¥${fm(item.amount)}</td>
