@@ -566,6 +566,27 @@
       </div>
     </details>
 
+    <!-- 追加明細 -->
+    <div style="margin-top:16px;border-top:1px solid #e2e8f0;padding-top:14px">
+      <label style="font-size:0.8rem;font-weight:600;color:#4a5568">追加明細（稼働時間行の下に追加されます）</label>
+      <div class="table-wrap" style="margin-top:8px">
+        <table style="width:100%;border-collapse:collapse;font-size:0.82rem">
+          <thead>
+            <tr style="background:#f7fafc">
+              <th style="padding:6px 8px;text-align:left;border:1px solid #e2e8f0;font-weight:600;color:#4a5568">品番・品名</th>
+              <th style="padding:6px 8px;text-align:right;width:70px;border:1px solid #e2e8f0;font-weight:600;color:#4a5568">数量</th>
+              <th style="padding:6px 8px;text-align:right;width:100px;border:1px solid #e2e8f0;font-weight:600;color:#4a5568">単価（円）</th>
+              <th style="padding:6px 8px;text-align:right;width:100px;border:1px solid #e2e8f0;font-weight:600;color:#4a5568">金額</th>
+              <th style="padding:6px 8px;width:80px;border:1px solid #e2e8f0;font-weight:600;color:#4a5568">課税区分</th>
+              <th style="padding:6px 8px;width:28px;border:1px solid #e2e8f0"></th>
+            </tr>
+          </thead>
+          <tbody id="inv-extra-rows"></tbody>
+        </table>
+      </div>
+      <button type="button" class="btn btn-secondary" style="margin-top:8px;font-size:0.82rem;padding:6px 14px" onclick="addInvoiceRow()">＋ 行を追加</button>
+    </div>
+
     <div class="btn-row">
       <button class="btn btn-primary" onclick="generateInvoice()">請求書を作成・PDFダウンロード</button>
     </div>
@@ -1226,6 +1247,33 @@
     }
   }
 
+  // ─── 追加明細行 ───────────────────────────────────────────
+  function addInvoiceRow() {
+    const inp = 'border:1px solid #cbd5e0;border-radius:4px;padding:5px 7px;font-size:0.85rem;background:#f7fafc;width:100%';
+    const tbody = document.getElementById('inv-extra-rows');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="padding:4px 6px;border:1px solid #e2e8f0"><input type="text" class="ei-name" style="${inp}" placeholder="品番・品名"></td>
+      <td style="padding:4px 6px;border:1px solid #e2e8f0"><input type="number" class="ei-qty" style="${inp};text-align:right" placeholder="1" min="0" oninput="calcExtraRow(this)"></td>
+      <td style="padding:4px 6px;border:1px solid #e2e8f0"><input type="number" class="ei-price" style="${inp};text-align:right" placeholder="0" min="0" oninput="calcExtraRow(this)"></td>
+      <td style="padding:4px 6px;border:1px solid #e2e8f0;text-align:right;white-space:nowrap" class="ei-amount">¥0</td>
+      <td style="padding:4px 6px;border:1px solid #e2e8f0">
+        <select class="ei-tax" style="${inp}"><option value="taxable">課税</option><option value="non">非課税</option></select>
+      </td>
+      <td style="padding:4px 6px;border:1px solid #e2e8f0;text-align:center">
+        <button type="button" onclick="this.closest('tr').remove()" style="background:none;border:none;color:#c53030;cursor:pointer;font-size:1.1rem;line-height:1">×</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  function calcExtraRow(input) {
+    const tr = input.closest('tr');
+    const qty   = parseFloat(tr.querySelector('.ei-qty').value)   || 0;
+    const price = parseFloat(tr.querySelector('.ei-price').value) || 0;
+    tr.querySelector('.ei-amount').textContent = '¥' + Math.floor(qty * price).toLocaleString('ja-JP');
+  }
+
   // ─── 請求書作成 ───────────────────────────────────────────
   const INV_SETTINGS_MAP = {
     invNoSeq: 'inv-invno-seq',
@@ -1322,15 +1370,32 @@
     const totalMin = data.reduce((s, r) => s + (r.work_min || 0), 0);
     const totalHrs = totalMin / 60;
     const subtotal = Math.floor(totalHrs * rate);
-    const tax      = Math.floor(subtotal * taxRate / 100);
-    const total    = subtotal + tax;
+
+    // 追加明細を収集
+    const extraItems = [];
+    document.querySelectorAll('#inv-extra-rows tr').forEach(tr => {
+      const name     = tr.querySelector('.ei-name')?.value.trim() || '';
+      const qty      = parseFloat(tr.querySelector('.ei-qty')?.value)   || 0;
+      const unitPrice= parseFloat(tr.querySelector('.ei-price')?.value) || 0;
+      const amount   = Math.floor(qty * unitPrice);
+      const taxable  = tr.querySelector('.ei-tax')?.value !== 'non';
+      extraItems.push({ name, qty, unitPrice, amount, taxable });
+    });
+
+    const taxableSubtotal    = subtotal + extraItems.filter(i => i.taxable).reduce((s,i) => s + i.amount, 0);
+    const nonTaxableSubtotal = extraItems.filter(i => !i.taxable).reduce((s,i) => s + i.amount, 0);
+    const tax   = Math.floor(taxableSubtotal * taxRate / 100);
+    const total = taxableSubtotal + nonTaxableSubtotal + tax;
+
     const invNoPrefix = document.getElementById('inv-invno-prefix').textContent.trim() || invDate.replace(/-/g, '').substring(0, 6);
     const invNoSeq    = g('inv-invno-seq') || '001';
     const invNo       = invNoPrefix + '-' + invNoSeq;
 
     const html = buildInvoiceHTML({
       invNo, client, issuer, invDate, dueDate, from, to,
-      totalMin, totalHrs, rate, taxRate, subtotal, tax, total,
+      totalMin, totalHrs, rate, taxRate,
+      subtotal, taxableSubtotal, nonTaxableSubtotal, tax, total,
+      extraItems,
       zip, address, tel, email, invoiceReg, note,
       bank, branch, branchNo, accountType, accountNo, accountName
     });
@@ -1341,7 +1406,9 @@
   }
 
   function buildInvoiceHTML({ invNo, client, issuer, invDate, dueDate, from, to,
-      totalMin, totalHrs, rate, taxRate, subtotal, tax, total,
+      totalMin, totalHrs, rate, taxRate,
+      subtotal, taxableSubtotal, nonTaxableSubtotal, tax, total,
+      extraItems,
       zip, address, tel, email, invoiceReg, note,
       bank, branch, branchNo, accountType, accountNo, accountName }) {
 
@@ -1353,7 +1420,16 @@
     const fromAddr = [zip ? `〒${h(zip)}` : '', h(address)].filter(Boolean).join('　');
     const bankLine = [h(bank), h(branch), branchNo?`（${h(branchNo)}）`:'', h(accountType), h(accountNo), h(accountName)].filter(Boolean).join('　');
 
-    const emptyRows = Array(3).fill('<tr><td>&nbsp;</td><td></td><td></td><td></td></tr>').join('');
+    const extraRows = (extraItems || []).map((item, i) => `
+      <tr>
+        <td>${h(item.name) || `品目${i + 2}`}</td>
+        <td class="r">${item.qty}</td>
+        <td class="r">¥${fm(item.unitPrice)}</td>
+        <td class="r">${item.taxable ? '課税' : '非課税'}</td>
+        <td class="r">¥${fm(item.amount)}</td>
+      </tr>`).join('');
+    const emptyCount = Math.max(0, 2 - (extraItems || []).length);
+    const emptyRows = Array(emptyCount).fill('<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>').join('');
 
     return `<!DOCTYPE html>
 <html lang="ja">
@@ -1456,20 +1532,23 @@
   </div>
 
   <table class="det">
-    <thead><tr><th>品番・品名</th><th class="r" style="width:130px">数量</th><th class="r" style="width:110px">単価</th><th class="r" style="width:110px">金額</th></tr></thead>
+    <thead><tr><th>品番・品名</th><th class="r" style="width:110px">数量</th><th class="r" style="width:110px">単価</th><th class="r" style="width:70px">課税区分</th><th class="r" style="width:110px">金額</th></tr></thead>
     <tbody>
       <tr>
         <td>1. 業務委託費（${fd(from)} 〜 ${fd(to)}）</td>
         <td class="r">${fmin(totalMin)}</td>
         <td class="r">¥${fm(rate)} / h</td>
+        <td class="r">課税</td>
         <td class="r">¥${fm(subtotal)}</td>
       </tr>
+      ${extraRows}
       ${emptyRows}
     </tbody>
   </table>
   <div class="sum-wrap">
     <table class="sum">
-      <tr><td class="l">小計</td><td class="r">¥ ${fm(subtotal)}</td></tr>
+      <tr><td class="l">課税小計</td><td class="r">¥ ${fm(taxableSubtotal)}</td></tr>
+      <tr><td class="l">非課税小計</td><td class="r">¥ ${fm(nonTaxableSubtotal)}</td></tr>
       <tr><td class="l">消費税（${taxRate}%）</td><td class="r">¥ ${fm(tax)}</td></tr>
       <tr class="tot"><td>合計金額</td><td class="r">¥ ${fm(total)}</td></tr>
     </table>
