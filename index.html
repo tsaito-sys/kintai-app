@@ -203,9 +203,17 @@
     .inv-section-details[open] summary::before { content: '▼ '; }
     .inv-section-details summary:hover { color: #2b6cb0; }
 
+    /* ─── 上部2カラム ─── */
+    .top-cols{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+    @media(max-width:680px){.top-cols{grid-template-columns:1fr}}
+    .gcal-vert{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+    .gcal-vert .form-group{margin:0}
+
+    /* ─── 勤怠追加行 ─── */
+    #add-record-row{background:#f0f7ff}
+    #add-record-row td{padding:6px 8px}
+
     /* ─── 稼働予定カレンダー ─── */
-    .sched-section{margin-top:20px;padding-top:16px;border-top:1px solid #e2e8f0}
-    .sched-section h3{font-size:0.9rem;font-weight:700;color:#2b6cb0;margin-bottom:12px}
     .sched-cal-nav{display:flex;align-items:center;gap:12px;margin-bottom:8px}
     .sched-cal-nav button{padding:4px 12px;border:1px solid #cbd5e0;border-radius:6px;background:white;cursor:pointer;font-size:0.85rem}
     .sched-cal-nav button:hover{background:#ebf8ff}
@@ -286,117 +294,84 @@
 
 <div class="container">
 
-  <!-- 入力フォーム -->
-  <div class="card">
-    <h2>勤怠入力</h2>
-    <div class="form-grid">
-      <div class="form-group">
-        <label for="f-date">日付</label>
-        <input type="date" id="f-date" />
-      </div>
-      <div class="form-group">
-        <label for="f-start">出勤時間</label>
-        <input type="time" id="f-start" />
-      </div>
-      <div class="form-group">
-        <label for="f-end">退勤時間</label>
-        <input type="time" id="f-end" />
-      </div>
-      <div class="form-group">
-        <label for="f-break">休憩時間（分）</label>
-        <input type="number" id="f-break" min="0" max="480" value="60" />
-      </div>
-      <div class="form-group full">
-        <label for="f-memo">作業内容・メモ</label>
-        <textarea id="f-memo" placeholder="例）定例会議、資料作成、コードレビューなど"></textarea>
-      </div>
-    </div>
+  <!-- 上部: 2カラム -->
+  <div class="top-cols">
 
-    <div class="work-result" id="work-result" style="display:none">
-      <span>実労働時間：</span>
-      <strong id="work-display">–</strong>
-    </div>
+    <!-- 左: Googleカレンダー連携 -->
+    <div class="card">
+      <h2>Googleカレンダー連携</h2>
 
-    <div class="btn-row">
-      <button class="btn btn-primary" id="btn-save" onclick="saveRecord()">保存する</button>
-      <button class="btn btn-secondary" onclick="clearForm()">クリア</button>
-    </div>
-  </div>
-
-  <!-- Googleカレンダー連携 -->
-  <div class="card">
-    <h2>Googleカレンダー連携</h2>
-
-    <div class="gcal-settings">
-      <details>
-        <summary>設定（Google OAuth クライアントID）</summary>
-        <div class="form-group">
-          <label for="gcal-client-id">クライアントID</label>
-          <input type="text" id="gcal-client-id" placeholder="xxxxxxxxxx.apps.googleusercontent.com" />
-          <p class="gcal-hint">
-            Google Cloud Console → APIとサービス → 認証情報 → OAuthクライアントID（Webアプリケーション）で取得できます。<br>
-            「承認済みのJavaScriptオリジン」にこのページのURL（例: <code>http://localhost</code> または <code>file://</code> の場合は <code>http://localhost</code>）を登録してください。
-          </p>
-          <div class="btn-row" style="margin-top:10px">
-            <button class="btn btn-primary" onclick="saveGcalClientId()">クライアントIDを保存</button>
+      <div class="gcal-settings">
+        <details>
+          <summary>設定（Google OAuth クライアントID）</summary>
+          <div class="form-group">
+            <label for="gcal-client-id">クライアントID</label>
+            <input type="text" id="gcal-client-id" placeholder="xxxxxxxxxx.apps.googleusercontent.com" />
+            <p class="gcal-hint">
+              Google Cloud Console → APIとサービス → 認証情報 → OAuthクライアントID（Webアプリケーション）で取得できます。<br>
+              「承認済みのJavaScriptオリジン」にこのページのURLを登録してください。
+            </p>
+            <div class="btn-row" style="margin-top:10px">
+              <button class="btn btn-primary" onclick="saveGcalClientId()">クライアントIDを保存</button>
+            </div>
           </div>
+        </details>
+      </div>
+
+      <div class="gcal-vert">
+        <div class="form-group">
+          <label>開始日</label>
+          <input type="date" id="gcal-from" />
         </div>
-      </details>
-    </div>
-
-    <div class="filter-row" style="margin-top:14px">
-      <div class="form-group">
-        <label>開始日</label>
-        <input type="date" id="gcal-from" />
-      </div>
-      <div class="form-group">
-        <label>終了日</label>
-        <input type="date" id="gcal-to" />
-      </div>
-      <button class="btn btn-google" id="gcal-signin-btn" onclick="gcalSignIn()">
-        <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.4 30.2 0 24 0 14.6 0 6.5 5.5 2.7 13.5l7.9 6.1C12.4 13.3 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 6.9-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.6 28.4A14.5 14.5 0 0 1 9.5 24c0-1.5.3-3 .7-4.4l-7.9-6.1A23.8 23.8 0 0 0 0 24c0 3.9.9 7.5 2.7 10.7l7.9-6.3z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.2-7.7 2.2-6.2 0-11.5-4.2-13.4-9.8l-7.9 6.1C6.5 42.5 14.6 48 24 48z"/></svg>
-        Googleでサインイン
-      </button>
-      <button class="btn btn-primary" id="gcal-fetch-btn" onclick="fetchGcalEvents()" disabled>カレンダーを取得</button>
-    </div>
-
-    <!-- プレビュー -->
-    <div id="gcal-preview" style="display:none; margin-top:16px">
-      <div class="gcal-preview-header">
-        <div>
-          <label style="font-weight:600">取得したイベント</label>
-          <span style="font-size:0.75rem;color:#718096;margin-left:8px">各セルを直接編集できます。休憩時間は稼働時間から自動計算されています。</span>
+        <div class="form-group">
+          <label>終了日</label>
+          <input type="date" id="gcal-to" />
         </div>
-        <label style="cursor:pointer;gap:6px;display:flex;align-items:center">
-          <input type="checkbox" id="gcal-check-all" checked onchange="toggleAllGcal(this.checked)"> 全選択
-        </label>
+        <button class="btn btn-google" id="gcal-signin-btn" onclick="gcalSignIn()">
+          <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.4 30.2 0 24 0 14.6 0 6.5 5.5 2.7 13.5l7.9 6.1C12.4 13.3 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 6.9-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.6 28.4A14.5 14.5 0 0 1 9.5 24c0-1.5.3-3 .7-4.4l-7.9-6.1A23.8 23.8 0 0 0 0 24c0 3.9.9 7.5 2.7 10.7l7.9-6.3z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.2-7.7 2.2-6.2 0-11.5-4.2-13.4-9.8l-7.9 6.1C6.5 42.5 14.6 48 24 48z"/></svg>
+          Googleでサインイン
+        </button>
+        <button class="btn btn-primary" id="gcal-fetch-btn" onclick="fetchGcalEvents()" disabled>カレンダーを取得</button>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th style="width:36px"></th>
-              <th>日付</th>
-              <th>出勤時間</th>
-              <th>退勤時間</th>
-              <th style="width:90px">休憩(分)<br><span style="font-weight:400;font-size:0.7rem;opacity:0.85">自動計算</span></th>
-              <th>メモ</th>
-            </tr>
-          </thead>
-          <tbody id="gcal-preview-body"></tbody>
-        </table>
-      </div>
-      <div style="font-size:0.72rem;color:#718096;margin-top:6px">
-        休憩自動計算ルール：3h未満→0分 ／ 3〜6h→30分 ／ 6〜8h→45分 ／ 8h以上→60分
-      </div>
-      <div class="gcal-import-row">
-        <button class="btn btn-primary" id="gcal-import-btn" onclick="importGcalRecords()">選択した日程を取り込む</button>
+
+      <!-- プレビュー -->
+      <div id="gcal-preview" style="display:none; margin-top:16px">
+        <div class="gcal-preview-header">
+          <div>
+            <label style="font-weight:600">取得したイベント</label>
+            <span style="font-size:0.75rem;color:#718096;margin-left:8px">各セルを直接編集できます。休憩時間は稼働時間から自動計算されています。</span>
+          </div>
+          <label style="cursor:pointer;gap:6px;display:flex;align-items:center">
+            <input type="checkbox" id="gcal-check-all" checked onchange="toggleAllGcal(this.checked)"> 全選択
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:36px"></th>
+                <th>日付</th>
+                <th>出勤時間</th>
+                <th>退勤時間</th>
+                <th style="width:90px">休憩(分)<br><span style="font-weight:400;font-size:0.7rem;opacity:0.85">自動計算</span></th>
+                <th>メモ</th>
+              </tr>
+            </thead>
+            <tbody id="gcal-preview-body"></tbody>
+          </table>
+        </div>
+        <div style="font-size:0.72rem;color:#718096;margin-top:6px">
+          休憩自動計算ルール：3h未満→0分 ／ 3〜6h→30分 ／ 6〜8h→45分 ／ 8h以上→60分
+        </div>
+        <div class="gcal-import-row">
+          <button class="btn btn-primary" id="gcal-import-btn" onclick="importGcalRecords()">選択した日程を取り込む</button>
+        </div>
       </div>
     </div>
 
-    <!-- 稼働予定一括登録 -->
-    <div class="sched-section">
-      <h3>稼働予定の一括登録</h3>
+    <!-- 右: 稼働予定の一括登録 -->
+    <div class="card">
+      <h2>稼働予定の一括登録</h2>
       <p class="cal-hint" style="margin-bottom:10px">日付をクリックして選択し、「稼働予定を追加」でGoogleカレンダーに9:00〜17:00の予定を一括登録します。土日・祝日は選択できません。</p>
       <div class="sched-cal-nav">
         <button onclick="calPrev()">◀</button>
@@ -411,9 +386,72 @@
       </div>
       <p id="cal-holiday-status" class="cal-hint" style="margin-top:6px"></p>
     </div>
+
+  </div><!-- /.top-cols -->
+
+  <!-- 中部: 勤怠一覧 -->
+  <div class="card">
+    <h2>勤怠一覧</h2>
+
+    <!-- 集計（統合） -->
+    <div id="summary-card" style="display:none;margin-bottom:16px">
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="label">出勤日数</div>
+          <div class="value" id="sum-days">0 日</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">総労働時間</div>
+          <div class="value" id="sum-hours">0 h</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">1日平均</div>
+          <div class="value" id="sum-avg">0 h</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- フィルター -->
+    <div class="filter-row">
+      <div class="form-group">
+        <label>開始日</label>
+        <input type="date" id="filter-from" onchange="loadRecords()" />
+      </div>
+      <div class="form-group">
+        <label>終了日</label>
+        <input type="date" id="filter-to" onchange="loadRecords()" />
+      </div>
+      <button class="btn btn-secondary" onclick="clearFilter()">リセット</button>
+      <button class="btn btn-success" id="btn-csv" onclick="exportCSV()">CSVエクスポート</button>
+    </div>
+
+    <!-- テーブル -->
+    <div class="table-wrap">
+      <table id="records-table">
+        <thead>
+          <tr>
+            <th>日付</th>
+            <th>出勤</th>
+            <th>退勤</th>
+            <th>休憩</th>
+            <th>実労働時間</th>
+            <th>メモ</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="records-body">
+          <tr><td colspan="7" id="empty-msg">接続後にデータを読み込みます</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 勤怠追加 -->
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-primary" onclick="addRecordRow()">＋ 勤怠追加</button>
+    </div>
   </div>
 
-  <!-- 請求書作成 -->
+  <!-- 下部: 請求書作成 -->
   <div class="card">
     <h2>請求書作成</h2>
 
@@ -531,61 +569,6 @@
     </div>
   </div>
 
-  <!-- 集計 -->
-  <div class="card" id="summary-card" style="display:none">
-    <h2>集計（絞り込み期間）</h2>
-    <div class="summary-grid">
-      <div class="summary-card">
-        <div class="label">出勤日数</div>
-        <div class="value" id="sum-days">0 日</div>
-      </div>
-      <div class="summary-card">
-        <div class="label">総労働時間</div>
-        <div class="value" id="sum-hours">0 h</div>
-      </div>
-      <div class="summary-card">
-        <div class="label">1日平均</div>
-        <div class="value" id="sum-avg">0 h</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 一覧 -->
-  <div class="card">
-    <h2>勤怠一覧</h2>
-
-    <div class="filter-row">
-      <div class="form-group">
-        <label>開始日</label>
-        <input type="date" id="filter-from" onchange="loadRecords()" />
-      </div>
-      <div class="form-group">
-        <label>終了日</label>
-        <input type="date" id="filter-to" onchange="loadRecords()" />
-      </div>
-      <button class="btn btn-secondary" onclick="clearFilter()">リセット</button>
-      <button class="btn btn-success" id="btn-csv" onclick="exportCSV()">CSVエクスポート</button>
-    </div>
-
-    <div class="table-wrap">
-      <table id="records-table">
-        <thead>
-          <tr>
-            <th>日付</th>
-            <th>出勤</th>
-            <th>退勤</th>
-            <th>休憩</th>
-            <th>実労働時間</th>
-            <th>メモ</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="records-body">
-          <tr><td colspan="7" id="empty-msg">接続後にデータを読み込みます</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
 
 </div>
 
@@ -607,19 +590,6 @@
     loadRecords();
   }
 
-  // ─── 自動計算 ──────────────────────────────────────────────
-  function calcWorkMin() {
-    const s = document.getElementById('f-start').value;
-    const e = document.getElementById('f-end').value;
-    const b = parseInt(document.getElementById('f-break').value) || 0;
-    if (!s || !e) return null;
-    const [sh, sm] = s.split(':').map(Number);
-    const [eh, em] = e.split(':').map(Number);
-    let total = (eh * 60 + em) - (sh * 60 + sm) - b;
-    if (total < 0) total += 24 * 60; // 日跨ぎ対応
-    return total;
-  }
-
   function formatMin(min) {
     if (min == null || isNaN(min)) return '–';
     const h = Math.floor(min / 60);
@@ -627,26 +597,8 @@
     return `${h}時間${m > 0 ? m + '分' : ''}`;
   }
 
-  ['f-start', 'f-end', 'f-break'].forEach(id => {
-    document.getElementById(id).addEventListener('input', updateCalc);
-  });
-
-  function updateCalc() {
-    const min = calcWorkMin();
-    const el = document.getElementById('work-result');
-    if (min !== null && !isNaN(min)) {
-      document.getElementById('work-display').textContent = formatMin(min);
-      el.style.display = 'flex';
-    } else {
-      el.style.display = 'none';
-    }
-  }
-
   // ─── 自動接続 ─────────────────────────────────────────────
   (function setDefaults() {
-    const today = new Date().toLocaleDateString('sv');
-    document.getElementById('f-date').value = today;
-
     try {
       sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       onConnected();
@@ -656,45 +608,77 @@
     }
   })();
 
-  // ─── 保存 ─────────────────────────────────────────────────
-  async function saveRecord() {
+  // ─── 勤怠追加行 ───────────────────────────────────────────
+  function addRecordRow() {
+    const tbody = document.getElementById('records-body');
+    const existing = document.getElementById('add-record-row');
+    if (existing) { existing.remove(); return; }
+
+    const today = new Date().toLocaleDateString('sv');
+    const inp = 'border:1px solid #4299e1;border-radius:6px;padding:4px 6px;font-size:0.85rem;background:white;width:100%';
+    const tr = document.createElement('tr');
+    tr.id = 'add-record-row';
+    tr.innerHTML = `
+      <td><input type="date" id="add-date" value="${today}" style="${inp};min-width:120px"></td>
+      <td><input type="time" id="add-start" style="${inp};min-width:82px"></td>
+      <td><input type="time" id="add-end" style="${inp};min-width:82px"></td>
+      <td style="white-space:nowrap"><input type="number" id="add-break" value="60" min="0" max="480" style="${inp};width:52px"> 分</td>
+      <td class="work-time" id="add-work-display">–</td>
+      <td><input type="text" id="add-memo" style="${inp}" placeholder="メモ"></td>
+      <td style="white-space:nowrap">
+        <button class="btn-save-row" onclick="saveNewRecord(this)">保存</button>
+        <button class="btn-delete" onclick="document.getElementById('add-record-row').remove()">キャンセル</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+    ['add-start', 'add-end', 'add-break'].forEach(id => {
+      document.getElementById(id).addEventListener('input', updateAddCalc);
+    });
+    document.getElementById('add-date').focus();
+  }
+
+  function updateAddCalc() {
+    const s = document.getElementById('add-start')?.value;
+    const e = document.getElementById('add-end')?.value;
+    const b = parseInt(document.getElementById('add-break')?.value) || 0;
+    const el = document.getElementById('add-work-display');
+    if (!el) return;
+    if (!s || !e) { el.textContent = '–'; return; }
+    const [sh, sm] = s.split(':').map(Number);
+    const [eh, em] = e.split(':').map(Number);
+    let total = (eh * 60 + em) - (sh * 60 + sm) - b;
+    if (total < 0) total = 0;
+    el.textContent = formatMin(total);
+  }
+
+  async function saveNewRecord(btn) {
     if (!sb) { showToast('データベースに接続されていません', true); return; }
-    const date = document.getElementById('f-date').value;
-    const start_time = document.getElementById('f-start').value;
-    const end_time = document.getElementById('f-end').value;
-    const break_min = parseInt(document.getElementById('f-break').value) || 0;
-    const memo = document.getElementById('f-memo').value.trim();
+    const date       = document.getElementById('add-date').value;
+    const start_time = document.getElementById('add-start').value;
+    const end_time   = document.getElementById('add-end').value;
+    const break_min  = parseInt(document.getElementById('add-break').value) || 0;
+    const memo       = document.getElementById('add-memo').value.trim();
 
     if (!date || !start_time || !end_time) {
-      showToast('日付・出勤・退勤時間を入力してください', true);
-      return;
+      showToast('日付・出勤・退勤時間を入力してください', true); return;
     }
+    const [sh, sm] = start_time.split(':').map(Number);
+    const [eh, em] = end_time.split(':').map(Number);
+    let work_min = (eh * 60 + em) - (sh * 60 + sm) - break_min;
+    if (work_min < 0) work_min = 0;
 
-    const work_min = calcWorkMin();
-    if (work_min == null || work_min < 0) {
-      showToast('時間の入力が正しくありません', true);
-      return;
-    }
-
-    const btn = document.getElementById('btn-save');
     btn.disabled = true;
     btn.textContent = '保存中...';
-
     const { error } = await sb.from(TABLE).insert([{ date, start_time, end_time, break_min, work_min, memo }]);
 
-    btn.disabled = false;
-    btn.textContent = '保存する';
-
     if (error) {
-      console.error('Insert error:', error);
+      btn.disabled = false;
+      btn.textContent = '保存';
       const isRLS = error.code === '42501' || (error.message || '').includes('row-level security');
-      const msg = isRLS
-        ? 'RLSポリシーが原因で保存できません。Supabaseダッシュボードで kintai テーブルのRLSを無効化するか、INSERT ポリシーを追加してください。'
-        : `保存失敗 [${error.code || '?'}]: ${error.message}${error.hint ? ' / ' + error.hint : ''}`;
-      showToast(msg, true, isRLS ? 8000 : 4000);
+      showToast(isRLS ? 'RLSポリシーが原因で保存できません' : `保存失敗: ${error.message}`, true, isRLS ? 8000 : 4000);
     } else {
+      document.getElementById('add-record-row')?.remove();
       showToast('保存しました');
-      clearForm();
       loadRecords();
     }
   }
@@ -834,15 +818,6 @@
   }
 
   // ─── ユーティリティ ────────────────────────────────────────
-  function clearForm() {
-    document.getElementById('f-date').value = new Date().toLocaleDateString('sv');
-    document.getElementById('f-start').value = '';
-    document.getElementById('f-end').value = '';
-    document.getElementById('f-break').value = '60';
-    document.getElementById('f-memo').value = '';
-    document.getElementById('work-result').style.display = 'none';
-  }
-
   function clearFilter() {
     document.getElementById('filter-from').value = '';
     document.getElementById('filter-to').value = '';
