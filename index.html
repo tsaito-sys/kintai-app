@@ -203,6 +203,24 @@
     .inv-section-details[open] summary::before { content: '▼ '; }
     .inv-section-details summary:hover { color: #2b6cb0; }
 
+    /* ─── 稼働予定カレンダー ─── */
+    .sched-section{margin-top:20px;padding-top:16px;border-top:1px solid #e2e8f0}
+    .sched-section h3{font-size:0.9rem;font-weight:700;color:#2b6cb0;margin-bottom:12px}
+    .sched-cal-nav{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+    .sched-cal-nav button{padding:4px 12px;border:1px solid #cbd5e0;border-radius:6px;background:white;cursor:pointer;font-size:0.85rem}
+    .sched-cal-nav button:hover{background:#ebf8ff}
+    .sched-cal-nav span{font-weight:700;font-size:0.95rem;min-width:110px;text-align:center}
+    .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;max-width:448px;margin-bottom:12px}
+    .cal-hdr{text-align:center;font-size:0.72rem;font-weight:600;padding:4px 0}
+    .cal-day{text-align:center;padding:8px 0;border-radius:6px;cursor:pointer;font-size:0.85rem;user-select:none;border:1px solid transparent;transition:background 0.15s}
+    .cal-day:hover:not(.cal-dis):not(.cal-empty){background:#ebf8ff;border-color:#bee3f8}
+    .cal-day.cal-sel{background:#2b6cb0!important;color:white!important;border-color:#2b6cb0}
+    .cal-day.cal-dis{background:#f7fafc;color:#cbd5e0!important;cursor:not-allowed}
+    .cal-day.cal-empty{cursor:default;border:none}
+    .cal-day.cal-today:not(.cal-sel):not(.cal-dis){border-color:#4299e1}
+    .cal-footer{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:4px}
+    .cal-hint{font-size:0.75rem;color:#718096}
+
     /* ─── Google Calendar ─── */
     .btn-google {
       background: white;
@@ -374,6 +392,24 @@
       <div class="gcal-import-row">
         <button class="btn btn-primary" id="gcal-import-btn" onclick="importGcalRecords()">選択した日程を取り込む</button>
       </div>
+    </div>
+
+    <!-- 稼働予定一括登録 -->
+    <div class="sched-section">
+      <h3>稼働予定の一括登録</h3>
+      <p class="cal-hint" style="margin-bottom:10px">日付をクリックして選択し、「稼働予定を追加」でGoogleカレンダーに9:00〜17:00の予定を一括登録します。土日・祝日は選択できません。</p>
+      <div class="sched-cal-nav">
+        <button onclick="calPrev()">◀</button>
+        <span id="cal-title"></span>
+        <button onclick="calNext()">▶</button>
+      </div>
+      <div id="cal-grid" class="cal-grid"></div>
+      <div class="cal-footer">
+        <span id="cal-selected-count" class="cal-hint">0日選択中</span>
+        <button class="btn btn-primary" id="cal-register-btn" onclick="registerSchedule()">稼働予定を追加</button>
+        <button class="btn" style="background:#f7fafc;border:1px solid #cbd5e0;color:#4a5568" onclick="selectedDates.clear();renderCalendar()">選択解除</button>
+      </div>
+      <p id="cal-holiday-status" class="cal-hint" style="margin-top:6px"></p>
     </div>
   </div>
 
@@ -856,7 +892,155 @@
         applySignedInUI();
       }
     } catch (e) {}
+
+    // 祝日データ読み込み & カレンダー初期表示
+    loadHolidays().then(() => renderCalendar());
   })();
+
+  // ─── 稼働予定カレンダー ──────────────────────────────────────
+  let holidaySet = new Set();
+  let selectedDates = new Set();
+  let calYear = new Date().getFullYear();
+  let calMonth = new Date().getMonth();
+
+  async function loadHolidays() {
+    const statusEl = document.getElementById('cal-holiday-status');
+    const cacheKey = 'holidays_cache_v2';
+    try {
+      const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
+      if (cached && cached.expires > Date.now()) {
+        holidaySet = new Set(cached.data);
+        return;
+      }
+    } catch (e) {}
+    try {
+      statusEl.textContent = '祝日データを取得中...';
+      const proxyUrl = 'https://corsproxy.io/?url=' + encodeURIComponent('https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv');
+      const res = await fetch(proxyUrl);
+      const text = await res.text();
+      const dates = [];
+      for (const line of text.split('\n').slice(1)) {
+        const col = line.split(',')[0]?.trim();
+        if (!col) continue;
+        const parts = col.split('/');
+        if (parts.length !== 3) continue;
+        const [y, m, d] = parts;
+        dates.push(`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`);
+      }
+      holidaySet = new Set(dates);
+      localStorage.setItem(cacheKey, JSON.stringify({ data: dates, expires: Date.now() + 86400000 }));
+      statusEl.textContent = `祝日データ取得済み（${dates.length}件）`;
+    } catch (e) {
+      statusEl.textContent = '祝日データの取得に失敗しました（土日のみ除外します）';
+    }
+  }
+
+  function renderCalendar() {
+    document.getElementById('cal-title').textContent = `${calYear}年${calMonth + 1}月`;
+    const today = new Date().toLocaleDateString('sv');
+    const firstDow = new Date(calYear, calMonth, 1).getDay();
+    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+    const hdrs = ['日','月','火','水','木','金','土'];
+    const hdrColors = ['#e53e3e','#4a5568','#4a5568','#4a5568','#4a5568','#4a5568','#3182ce'];
+
+    let html = hdrs.map((h, i) =>
+      `<div class="cal-hdr" style="color:${hdrColors[i]}">${h}</div>`
+    ).join('');
+
+    for (let i = 0; i < firstDow; i++) html += `<div class="cal-day cal-empty"></div>`;
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const mm = String(calMonth + 1).padStart(2, '0');
+      const dd = String(d).padStart(2, '0');
+      const dateStr = `${calYear}-${mm}-${dd}`;
+      const dow = new Date(calYear, calMonth, d).getDay();
+      const isWeekend = dow === 0 || dow === 6;
+      const isHoliday = holidaySet.has(dateStr);
+      const disabled = isWeekend || isHoliday;
+      const selected = selectedDates.has(dateStr);
+      const isToday = dateStr === today;
+
+      let cls = 'cal-day';
+      if (disabled) cls += ' cal-dis';
+      else if (selected) cls += ' cal-sel';
+      if (isToday && !disabled) cls += ' cal-today';
+
+      const textColor = !disabled && !selected
+        ? (dow === 0 || isHoliday ? 'color:#e53e3e' : dow === 6 ? 'color:#3182ce' : '')
+        : '';
+      const onclick = disabled ? '' : `onclick="toggleDate('${dateStr}')"`;
+      html += `<div class="${cls}" ${onclick} style="${textColor}">${d}</div>`;
+    }
+
+    document.getElementById('cal-grid').innerHTML = html;
+    document.getElementById('cal-selected-count').textContent = `${selectedDates.size}日選択中`;
+  }
+
+  function toggleDate(dateStr) {
+    if (selectedDates.has(dateStr)) selectedDates.delete(dateStr);
+    else selectedDates.add(dateStr);
+    renderCalendar();
+  }
+
+  function calPrev() {
+    calMonth--;
+    if (calMonth < 0) { calMonth = 11; calYear--; }
+    renderCalendar();
+  }
+
+  function calNext() {
+    calMonth++;
+    if (calMonth > 11) { calMonth = 0; calYear++; }
+    renderCalendar();
+  }
+
+  async function registerSchedule() {
+    if (!gcalAccessToken) { showToast('先にGoogleでサインインしてください', true); return; }
+    if (!selectedDates.size) { showToast('登録する日付を選択してください', true); return; }
+
+    const btn = document.getElementById('cal-register-btn');
+    btn.disabled = true;
+    btn.textContent = '登録中...';
+
+    const dates = Array.from(selectedDates).sort();
+    let success = 0, fail = 0;
+
+    for (const dateStr of dates) {
+      const event = {
+        summary: '稼働予定',
+        start: { dateTime: `${dateStr}T09:00:00+09:00`, timeZone: 'Asia/Tokyo' },
+        end:   { dateTime: `${dateStr}T17:00:00+09:00`, timeZone: 'Asia/Tokyo' }
+      };
+      try {
+        const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + gcalAccessToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify(event)
+        });
+        if (res.status === 401) {
+          gcalAccessToken = null;
+          sessionStorage.removeItem('gcal_token_data');
+          clearSignedInUI();
+          showToast('セッションが切れました。再度サインインしてください', true);
+          btn.disabled = false;
+          btn.textContent = '稼働予定を追加';
+          return;
+        }
+        res.ok ? success++ : fail++;
+      } catch (e) { fail++; }
+    }
+
+    btn.disabled = false;
+    btn.textContent = '稼働予定を追加';
+
+    if (fail === 0) {
+      showToast(`${success}件の稼働予定を登録しました`);
+      selectedDates.clear();
+      renderCalendar();
+    } else {
+      showToast(`${success}件登録、${fail}件失敗しました`, true);
+    }
+  }
 
   function saveGcalClientId() {
     const clientId = document.getElementById('gcal-client-id').value.trim();
@@ -882,7 +1066,7 @@
 
     gcalTokenClient = google.accounts.oauth2.initTokenClient({
       client_id: clientId,
-      scope: 'https://www.googleapis.com/auth/calendar.readonly',
+      scope: 'https://www.googleapis.com/auth/calendar.events',
       callback: (resp) => {
         if (resp.error) {
           showToast('Google認証エラー: ' + resp.error, true);
