@@ -1436,13 +1436,13 @@
     const extraRows = (extraItems || []).map((item, i) => `
       <tr>
         <td>${h(item.name) || `品目${i + 2}`}</td>
-        <td>${item.taxable ? item.qty : '–'}</td>
-        <td>¥${fm(item.unitPrice)}</td>
-        <td>${item.taxable ? '課税' : '非課税'}</td>
-        <td>¥${fm(item.amount)}</td>
+        <td class="r">${item.taxable ? item.qty : '–'}</td>
+        <td class="r">¥${fm(item.unitPrice)}</td>
+        <td class="c">${item.taxable ? '課税' : '非課税'}</td>
+        <td class="r">¥${fm(item.amount)}</td>
       </tr>`).join('');
     const emptyCount = Math.max(0, 2 - (extraItems || []).length);
-    const emptyRows = Array(emptyCount).fill('<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>').join('');
+    const emptyRows = Array(emptyCount).fill('<tr><td>&nbsp;</td><td class="r"></td><td class="r"></td><td class="c"></td><td class="r"></td></tr>').join('');
 
     return `<!DOCTYPE html>
 <html lang="ja">
@@ -1482,8 +1482,9 @@
 
   table.det{width:100%;border-collapse:collapse;margin-bottom:4px}
   table.det th{background:#f0f0f0;color:#333;padding:8px 12px;font-size:13px;font-weight:600;text-align:center;border:1px solid #ccc}
-  table.det th.r,table.det td.r{text-align:center}
-  table.det td{padding:10px 12px;border:1px solid #e2e8f0;font-size:13.5px;text-align:center}
+  table.det td{padding:10px 12px;border:1px solid #e2e8f0;font-size:13.5px;text-align:left}
+  table.det td.r{text-align:right}
+  table.det td.c{text-align:center}
 
   .sum-wrap{display:flex;justify-content:flex-end;margin-bottom:24px}
   table.sum{width:280px;border-collapse:collapse}
@@ -1549,10 +1550,10 @@
     <tbody>
       <tr>
         <td>1. 業務委託費（${fd(from)} 〜 ${fd(to)}）</td>
-        <td>${fmin(totalMin)}</td>
-        <td>¥${fm(rate)} / h</td>
-        <td>課税</td>
-        <td>¥${fm(subtotal)}</td>
+        <td class="r">${fmin(totalMin)}</td>
+        <td class="r">¥${fm(rate)} / h</td>
+        <td class="c">課税</td>
+        <td class="r">¥${fm(subtotal)}</td>
       </tr>
       ${extraRows}
       ${emptyRows}
@@ -1583,22 +1584,26 @@
 <script>
 function dlPDF(){
   const outer = document.getElementById('inv-outer');
-  const inner = document.getElementById('inv');
-  const prevOuter = outer.style.cssText;
-  // flexやmin-heightは使わず、コンテンツの自然な高さでキャプチャ
-  outer.style.cssText = 'max-width:100%;width:100%;margin:0;border-top:19px solid #333;border-bottom:19px solid #333;';
-  inner.style.cssText = 'padding:20px 30px;';
-
   html2pdf().set({
-    margin:0,
+    margin:[10,10,10,10],
     filename:'請求書_${h(invNo)}.pdf',
-    html2canvas:{scale:2,useCORS:true,letterRendering:true,windowWidth:794,logging:false},
+    html2canvas:{
+      scale:2,
+      useCORS:true,
+      letterRendering:true,
+      windowWidth:794,
+      logging:false,
+      onclone:function(doc){
+        const o = doc.getElementById('inv-outer');
+        const i = doc.getElementById('inv');
+        if(o){o.style.cssText='max-width:100%;width:100%;margin:0;border-top:19px solid #333;border-bottom:19px solid #333;';}
+        if(i){i.style.cssText='padding:20px 30px;';}
+        doc.querySelectorAll('.toolbar').forEach(el=>el.style.display='none');
+      }
+    },
     jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},
     pagebreak:{mode:'avoid-all'}
-  }).from(outer).save().then(()=>{
-    outer.style.cssText = prevOuter;
-    inner.style.cssText = '';
-  });
+  }).from(outer).save();
 }
 <\/script>
 <div class="toolbar" style="margin-top:24px">
