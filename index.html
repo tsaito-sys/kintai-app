@@ -1584,17 +1584,17 @@
 function dlPDF(){
   const outer = document.getElementById('inv-outer');
   const inner = document.getElementById('inv');
-  // PDF用にコンパクトなスタイルを一時適用（印刷設定と同等）
   const prevOuter = outer.style.cssText;
-  const prevPad   = inner.style.padding;
-  outer.style.cssText = 'max-width:100%;width:100%;margin:0;border-top:19px solid #333;border-bottom:19px solid #333;min-height:297mm;display:flex;flex-direction:column';
-  inner.style.cssText = 'padding:20px 30px;flex:1;display:flex;flex-direction:column';
+  // flexやmin-heightは使わず、コンテンツの自然な高さでキャプチャ
+  outer.style.cssText = 'max-width:100%;width:100%;margin:0;border-top:19px solid #333;border-bottom:19px solid #333;';
+  inner.style.cssText = 'padding:20px 30px;';
 
   html2pdf().set({
     margin:0,
     filename:'請求書_${h(invNo)}.pdf',
-    html2canvas:{scale:2,useCORS:true,letterRendering:true,windowWidth:794},
-    jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
+    html2canvas:{scale:2,useCORS:true,letterRendering:true,windowWidth:794,logging:false},
+    jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},
+    pagebreak:{mode:'avoid-all'}
   }).from(outer).save().then(()=>{
     outer.style.cssText = prevOuter;
     inner.style.cssText = '';
