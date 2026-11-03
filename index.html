@@ -1817,10 +1817,10 @@
   }
 
   (function initInvoiceForm() {
-    // 日付系は常に今月で初期化
+    // 請求日は今日、期間は前月1日〜前月末日で初期化
     const now      = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toLocaleDateString('sv');
-    const lastDay  = new Date(now.getFullYear(), now.getMonth() + 1, 0).toLocaleDateString('sv');
+    const firstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1).toLocaleDateString('sv');
+    const lastDay  = new Date(now.getFullYear(), now.getMonth(), 0).toLocaleDateString('sv');
     const dueDay   = new Date(now.getFullYear(), now.getMonth() + 2, 0).toLocaleDateString('sv');
     document.getElementById('inv-date').value     = now.toLocaleDateString('sv');
     document.getElementById('inv-from').value     = firstDay;
@@ -1836,6 +1836,9 @@
     updateInvNoPrefix();
     document.getElementById('inv-from').addEventListener('change', updateInvNoPrefix);
 
+    // 請求日を変更したら期間を前月1日〜前月末日に自動設定
+    document.getElementById('inv-date').addEventListener('change', applyInvPeriodFromDate);
+
     // 請求書ごとの設定はlocalStorageへ自動保存
     for (const id of Object.values(INV_LOCAL_MAP)) {
       const el = document.getElementById(id);
@@ -1849,6 +1852,16 @@
       if (el) el.addEventListener('change', scheduleInvProfileSave);
     }
   })();
+
+  // 請求日の前月1日〜前月末日を期間に設定（請求書番号の YYYYMM も連動）
+  function applyInvPeriodFromDate() {
+    const invDate = document.getElementById('inv-date').value;
+    if (!invDate) return;
+    const [y, m] = invDate.split('-').map(Number);
+    document.getElementById('inv-from').value = new Date(y, m - 2, 1).toLocaleDateString('sv');
+    document.getElementById('inv-to').value   = new Date(y, m - 1, 0).toLocaleDateString('sv');
+    updateInvNoPrefix();
+  }
 
   async function generateInvoice() {
     if (!sb) { showToast('データベースに接続されていません', true); return; }
