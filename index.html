@@ -1010,7 +1010,7 @@
       <td><input type="time" id="add-end" style="${inp};min-width:82px"></td>
       <td style="white-space:nowrap"><input type="number" id="add-break" value="60" min="0" max="480" style="${inp};width:52px"> 分</td>
       <td class="work-time" id="add-work-display">–</td>
-      <td><input type="text" id="add-memo" style="${inp}" placeholder="作業内容"></td>
+      <td><textarea id="add-memo" rows="3" style="${inp};min-height:0;resize:vertical" placeholder="作業内容"></textarea></td>
       <td style="white-space:nowrap">
         <button class="btn-save-row" onclick="saveNewRecord(this)">保存</button>
         <button class="btn-delete" onclick="document.getElementById('add-record-row').remove()">キャンセル</button>
@@ -1045,7 +1045,7 @@
     const start_time = document.getElementById('add-start').value;
     const end_time   = document.getElementById('add-end').value;
     const break_min  = parseInt(document.getElementById('add-break').value) || 0;
-    const memo       = document.getElementById('add-memo').value.trim();
+    const memo       = document.getElementById('add-memo').value.trimEnd();
 
     if (!date || !start_time || !end_time) {
       showToast('日付・出勤・退勤時間を入力してください', true); return;
@@ -1139,7 +1139,8 @@
           <td><input type="time" class="r-end" value="${r.end_time || ''}" style="${inp};min-width:82px"></td>
           <td style="white-space:nowrap"><input type="number" class="r-break" value="${r.break_min ?? 0}" min="0" max="480" style="${inp};width:52px"> 分</td>
           <td class="work-time">${formatMin(r.work_min)}</td>
-          <td><input type="text" class="r-memo" value="${escHtml(r.memo || '')}" style="${inp}"></td>
+          <td><textarea class="r-memo" rows="3" style="${inp};min-height:0;resize:vertical">
+${escHtml(r.memo || '')}</textarea></td>
           <td style="white-space:nowrap">
             <button class="btn-save-row" onclick="updateRecord('${r.id}', this)">保存</button>
             <button class="btn-delete" onclick="deleteRecord('${r.id}')">削除</button>
@@ -1156,7 +1157,7 @@
     const start    = tr.querySelector('.r-start').value;
     const end      = tr.querySelector('.r-end').value;
     const breakMin = parseInt(tr.querySelector('.r-break').value) || 0;
-    const memo     = tr.querySelector('.r-memo').value;
+    const memo     = tr.querySelector('.r-memo').value.trimEnd();
 
     let workMin = 0;
     if (start && end) {
@@ -1212,6 +1213,11 @@
   }
 
   // ─── CSV エクスポート ──────────────────────────────────────
+  // RFC4180: フィールドをダブルクォートで囲み、内部の " は "" にエスケープ（改行・カンマもそのまま囲みの中に入る）
+  function csvField(v) {
+    return '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  }
+
   function exportCSV() {
     if (!sb) { showToast('データベースに接続されていません', true); return; }
     if (!records.length) { showToast('エクスポートするデータがありません', true); return; }
@@ -1227,8 +1233,8 @@
         r.end_time || '',
         r.break_min ?? 0,
         ((r.work_min ?? 0) / 60).toFixed(2),
-        (r.memo || '').replace(/"/g, '""')
-      ].map(v => `"${v}"`).join(','));
+        r.memo || ''
+      ].map(csvField).join(','));
       const selectedUserId = document.getElementById('filter-user').value;
       namePrefix = selectedUserId ? (allProfiles[selectedUserId] || '不明') : '全ユーザー';
     } else {
@@ -1239,8 +1245,8 @@
         r.end_time || '',
         r.break_min ?? 0,
         ((r.work_min ?? 0) / 60).toFixed(2),
-        (r.memo || '').replace(/"/g, '""')
-      ].map(v => `"${v}"`).join(','));
+        r.memo || ''
+      ].map(csvField).join(','));
       namePrefix = document.getElementById('inv-issuer').value.trim().replace(/[ 　]/g, '') || 'kintai';
     }
 
