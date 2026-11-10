@@ -994,8 +994,108 @@
     loadRecords();
   }
 
+  // ─── 下書き（localStorage） ─────────────────────────────────
+  // キー: kintai_draft:{ユーザーID}:new / kintai_draft:{ユーザーID}:edit:{レコードID}
+  function draftKey(kind, id) {
+    if (!currentUser) return null;
+    return `kintai_draft:${currentUser.id}:${kind}` + (id != null ? `:${id}` : '');
+  }
+  function loadDraft(kind, id) {
+    const k = draftKey(kind, id);
+    if (!k) return null;
+    try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; }
+  }
+  function saveDraft(kind, id, data) {
+    const k = draftKey(kind, id);
+    if (!k) return;
+    try { localStorage.setItem(k, JSON.stringify(data)); } catch (e) { console.warn('[Draft] save failed:', e); }
+  }
+  function clearDraft(kind, id) {
+    const k = draftKey(kind, id);
+    if (!k) return;
+    try { localStorage.removeItem(k); } catch {}
+  }
+
+  // レコードの比較用（時刻は HH:MM、休憩は数値、memo は保存時と同じく trimEnd）
+  function normRecForDraft(r) {
+    return JSON.stringify([
+      r.date || '',
+      (r.start_time || '').slice(0, 5),
+      (r.end_time || '').slice(0, 5),
+      Number(r.break_min) || 0,
+      (r.memo || '').trimEnd()
+    ]);
+  }
+
+  function readEditRow(tr) {
+    return {
+      date:     tr.querySelector('.r-date').value,
+      start:    tr.querySelector('.r-start').value,
+      end:      tr.querySelector('.r-end').value,
+      breakMin: tr.querySelector('.r-break').value,
+      memo:     tr.querySelector('.r-memo').value
+    };
+  }
+
+  function saveEditDraft(tr, id) {
+    const rec = records.find(r => String(r.id) === String(id));
+    if (!rec) return;
+    const v = readEditRow(tr);
+    const asRec = { date: v.date, start_time: v.start, end_time: v.end, break_min: parseInt(v.breakMin) || 0, memo: v.memo };
+    // サーバーの値と同じに戻したら下書きは不要
+    if (normRecForDraft(asRec) === normRecForDraft(rec)) { clearDraft('edit', id); return; }
+    saveDraft('edit', id, {
+      base: { date: rec.date, start_time: rec.start_time, end_time: rec.end_time, break_min: rec.break_min, memo: rec.memo },
+      values: v
+    });
+  }
+
+  // 一覧の再描画後に下書きを復元する（個人ユーザーのみ）
+  function restoreDrafts(data) {
+    if (!currentUser || currentRole === 'admin') return;
+    const tbody = document.getElementById('records-body');
+
+    tbody.querySelectorAll('tr[data-id]').forEach(tr => {
+      const id  = tr.dataset.id;
+      const rec = data.find(r => String(r.id) === String(id));
+      if (!rec) return;
+      tr.addEventListener('input', () => saveEditDraft(tr, id));
+
+      const d = loadDraft('edit', id);
+      if (!d) return;
+      // 下書き作成後にサーバー側で更新されていたら破棄
+      if (!d.base || !d.values || normRecForDraft(d.base) !== normRecForDraft(rec)) {
+        clearDraft('edit', id);
+        return;
+      }
+      tr.querySelector('.r-date').value  = d.values.date ?? '';
+      tr.querySelector('.r-start').value = d.values.start ?? '';
+      tr.querySelector('.r-end').value   = d.values.end ?? '';
+      tr.querySelector('.r-break').value = d.values.breakMin ?? '';
+      tr.querySelector('.r-memo').value  = d.values.memo ?? '';
+    });
+
+    if (loadDraft('new') && !document.getElementById('add-record-row')) {
+      addRecordRow({ silent: true });
+    }
+  }
+
   // ─── 勤怠追加行 ───────────────────────────────────────────
-  function addRecordRow() {
+  const ADD_DRAFT_FIELDS = { date: 'add-date', start: 'add-start', end: 'add-end', breakMin: 'add-break', memo: 'add-memo' };
+
+  function saveNewDraft() {
+    const d = {};
+    for (const [key, id] of Object.entries(ADD_DRAFT_FIELDS)) d[key] = document.getElementById(id)?.value ?? '';
+    saveDraft('new', null, d);
+  }
+
+  // キャンセル: 下書きも破棄して閉じる（「＋ 勤怠追加」で閉じた場合は下書きを残す）
+  function cancelNewRecord() {
+    clearDraft('new');
+    document.getElementById('add-record-row')?.remove();
+  }
+
+  function addRecordRow(opts = {}) {
     const tbody = document.getElementById('records-body');
     const existing = document.getElementById('add-record-row');
     if (existing) { existing.remove(); return; }
@@ -1013,14 +1113,26 @@
       <td><textarea id="add-memo" rows="3" style="${inp};min-height:0;resize:vertical" placeholder="作業内容"></textarea></td>
       <td style="white-space:nowrap">
         <button class="btn-save-row" onclick="saveNewRecord(this)">保存</button>
-        <button class="btn-delete" onclick="document.getElementById('add-record-row').remove()">キャンセル</button>
+        <button class="btn-delete" onclick="cancelNewRecord()">キャンセル</button>
       </td>
     `;
     tbody.appendChild(tr);
+
+    const draft = loadDraft('new');
+    if (draft) {
+      for (const [key, id] of Object.entries(ADD_DRAFT_FIELDS)) {
+        if (draft[key] != null) document.getElementById(id).value = draft[key];
+      }
+      updateAddCalc();
+    }
+
     ['add-start', 'add-end', 'add-break'].forEach(id => {
       document.getElementById(id).addEventListener('input', updateAddCalc);
     });
-    document.getElementById('add-date').focus();
+    Object.values(ADD_DRAFT_FIELDS).forEach(id => {
+      document.getElementById(id).addEventListener('input', saveNewDraft);
+    });
+    if (!opts.silent) document.getElementById('add-date').focus();
   }
 
   function updateAddCalc() {
@@ -1067,6 +1179,7 @@
       const isRLS = error.code === '42501' || (error.message || '').includes('row-level security');
       showToast(isRLS ? 'RLSポリシーが原因で保存できません' : `保存失敗: ${error.message}`, true, isRLS ? 8000 : 4000);
     } else {
+      clearDraft('new');
       document.getElementById('add-record-row')?.remove();
       showToast('保存しました');
       loadRecords();
@@ -1085,6 +1198,7 @@
         '<tr><td colspan="7" id="empty-msg">開始日と終了日を指定してください</td></tr>';
       records = [];
       renderSummary([]);
+      restoreDrafts([]);
       return;
     }
 
@@ -1112,6 +1226,7 @@
 
     if (!data.length) {
       tbody.innerHTML = '<tr><td colspan="7" id="empty-msg">データがありません</td></tr>';
+      restoreDrafts([]);
       return;
     }
 
@@ -1147,6 +1262,7 @@ ${escHtml(r.memo || '')}</textarea></td>
           </td>
         </tr>
       `).join('');
+      restoreDrafts(data);
     }
   }
 
@@ -1184,6 +1300,7 @@ ${escHtml(r.memo || '')}</textarea></td>
       tr.querySelector('.work-time').textContent = formatMin(workMin);
       const rec = records.find(r => String(r.id) === String(id));
       if (rec) { rec.date = date; rec.start_time = start || null; rec.end_time = end || null; rec.break_min = breakMin; rec.work_min = workMin; rec.memo = memo; }
+      clearDraft('edit', id);
       renderSummary(records);
       showToast('更新しました');
     }
@@ -1208,6 +1325,7 @@ ${escHtml(r.memo || '')}</textarea></td>
     if (!confirm('この記録を削除しますか？')) return;
     const { error } = await sb.from(TABLE).delete().eq('id', id);
     if (error) { showToast('削除失敗: ' + error.message, true); return; }
+    clearDraft('edit', id);
     showToast('削除しました');
     loadRecords();
   }
