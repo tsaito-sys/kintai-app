@@ -986,7 +986,9 @@
         }
 
         currentUser = session?.user || null;
-        currentRole = currentUser?.user_metadata?.role || 'user';
+        // ロールは app_metadata で判定（user_metadata はユーザー自身が書き換えられる）。
+        // ここは画面の出し分けだけで、権限そのものは RLS・Edge Function 側で判定している
+        currentRole = currentUser?.app_metadata?.role || 'user';
 
         if (!currentUser) {
           console.log('[Auth] No session – showing login screen');
@@ -2543,8 +2545,9 @@ function dlPDF() {
   }
 
   // ─── ユーザー管理 ────────────────────────────────────────
-  // SECURITY DEFINER SQL 関数を使用
-  // サービスロールキー・Edge Function・Vault いずれも不要
+  // 一覧取得: SQL 関数 list_users_for_admin（SECURITY DEFINER、supabase_setup.sql 8）
+  // 作成・削除: Edge Function admin-user（supabase/functions/admin-user、サービスロールキーは関数側の secret）
+  // 管理者判定はいずれも app_metadata.role
 
   function showUserMgmt() {
     document.getElementById('user-mgmt-modal').style.display = 'block';

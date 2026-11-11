@@ -1,6 +1,11 @@
 -- ============================================================
 -- 勤怠管理アプリ Supabase 認証設定SQL
 -- Supabase Dashboard > SQL Editor で実行してください
+--
+-- ロール（管理者かどうか）は app_metadata.role で判定する。
+-- user_metadata はユーザー自身が書き換えられるため判定に使わない。
+-- 既存環境の移行は supabase/migrations/20261111_role_to_app_metadata.sql と
+-- README.md を参照。
 -- ============================================================
 
 -- 1. kintaiテーブルに user_id 列を追加
@@ -31,7 +36,7 @@ DROP POLICY IF EXISTS "kintai_delete"  ON kintai;
 
 CREATE POLICY "kintai_select" ON kintai FOR SELECT USING (
   auth.uid() = user_id
-  OR (auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
+  OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
 );
 CREATE POLICY "kintai_insert" ON kintai FOR INSERT WITH CHECK (
   auth.uid() = user_id
@@ -52,7 +57,7 @@ DROP POLICY IF EXISTS "profiles_update" ON profiles;
 
 CREATE POLICY "profiles_select" ON profiles FOR SELECT USING (
   auth.uid() = id
-  OR (auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
+  OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
 );
 CREATE POLICY "profiles_insert" ON profiles FOR INSERT WITH CHECK (
   auth.uid() = id
@@ -70,10 +75,22 @@ CREATE POLICY "profiles_update" ON profiles FOR UPDATE USING (
 
 -- ============================================================
 -- 【管理者ユーザーの設定方法】
--- Supabase Dashboard > Authentication > Users
--- 対象ユーザーを選択 > 「Edit」
--- User Metadata に以下を入力して保存:
---   {"role": "admin"}
+-- ロールは app_metadata に入れる（User Metadata ではない）。
+-- ダッシュボードでは app_metadata を直接編集できないため、
+-- SQL Editor で下記のメールアドレスを書き換えて実行する:
+--
+--   UPDATE auth.users
+--   SET raw_app_meta_data = COALESCE(raw_app_meta_data, '{}'::jsonb) || '{"role":"admin"}'::jsonb
+--   WHERE email = 'admin@example.com';
+--
+-- 管理者を外す場合:
+--   UPDATE auth.users
+--   SET raw_app_meta_data = raw_app_meta_data - 'role'
+--   WHERE email = 'admin@example.com';
+--
+-- ※ 反映は対象ユーザーが「ログアウト → ログイン」した後
+--   （ログイン中のトークンには変更前の値が入っているため）
+-- ※ アプリのユーザー管理画面で「管理者」として作成した場合は自動で設定される
 -- ============================================================
 
 -- ============================================================
@@ -122,7 +139,8 @@ SET search_path = ''
 AS $$
 BEGIN
   -- 管理者のみ実行可能
-  IF (auth.jwt() -> 'user_metadata' ->> 'role') <> 'admin' THEN
+  -- ※ role 未設定(NULL)でも弾くため <> ではなく IS DISTINCT FROM を使う
+  IF (auth.jwt() -> 'app_metadata' ->> 'role') IS DISTINCT FROM 'admin' THEN
     RAISE EXCEPTION 'admin only';
   END IF;
 
@@ -131,7 +149,7 @@ BEGIN
     au.id::uuid,
     au.email::text,
     p.name::text,
-    COALESCE(au.raw_user_meta_data ->> 'role', 'user')::text,
+    COALESCE(au.raw_app_meta_data ->> 'role', 'user')::text,
     au.created_at::timestamptz,
     (au.email_confirmed_at IS NOT NULL)::bool
   FROM auth.users au
@@ -144,9 +162,10 @@ $$;
 GRANT EXECUTE ON FUNCTION list_users_for_admin() TO authenticated;
 
 -- ============================================================
--- 9. ユーザー作成・削除関数
---    SECURITY DEFINER で postgres 権限で実行するため
---    サービスロールキー・Edge Function・Vault いずれも不要
+-- 9. ユーザー作成・削除関数（SQL 版）
+--    ※ 現在のアプリ（index.html）はユーザーの作成・削除に
+--      Edge Function「admin-user」を使っており、この2関数は呼んでいない。
+--      予備として残しているため、ロール判定は app_metadata に揃えてある。
 -- ============================================================
 CREATE OR REPLACE FUNCTION admin_create_user(
   p_email    text,
@@ -161,8 +180,12 @@ AS $$
 DECLARE
   v_uid uuid := gen_random_uuid();
 BEGIN
-  IF (auth.jwt() -> 'user_metadata' ->> 'role') <> 'admin' THEN
+  IF (auth.jwt() -> 'app_metadata' ->> 'role') IS DISTINCT FROM 'admin' THEN
     RAISE EXCEPTION 'admin only';
+  END IF;
+
+  IF p_role NOT IN ('user', 'admin') THEN
+    RAISE EXCEPTION '不正なロール: %', p_role;
   END IF;
 
   INSERT INTO auth.users (
@@ -179,8 +202,9 @@ BEGIN
     p_email,
     extensions.crypt(p_password, extensions.gen_salt('bf')),
     now(),
-    '{"provider":"email","providers":["email"]}'::jsonb,
-    jsonb_build_object('role', p_role),
+    -- ロールは app_metadata に入れる（ユーザー自身は書き換えられない）
+    '{"provider":"email","providers":["email"]}'::jsonb || jsonb_build_object('role', p_role),
+    '{}'::jsonb,
     now(),
     now()
   );
@@ -203,7 +227,7 @@ SECURITY DEFINER
 SET search_path = ''
 AS $$
 BEGIN
-  IF (auth.jwt() -> 'user_metadata' ->> 'role') <> 'admin' THEN
+  IF (auth.jwt() -> 'app_metadata' ->> 'role') IS DISTINCT FROM 'admin' THEN
     RAISE EXCEPTION 'admin only';
   END IF;
 
