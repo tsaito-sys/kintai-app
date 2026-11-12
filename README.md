@@ -56,6 +56,54 @@ npx supabase secrets unset 名前 --project-ref hgiflgrsvocvdlfnqckp
 
 ---
 
+## Slack 作業報告（slack-report）
+
+一覧の各行の「Slackに報告」ボタンから、その行の作業内容を Slack に投稿する。
+
+- ブラウザは行の id だけを Edge Function `slack-report` に送る。氏名（`profiles.name`）と作業内容（`kintai.memo`）は関数側が DB から読む。送れるのは自分の行だけ。
+- Slack の Webhook URL は secret `SLACK_WEBHOOK_URL` にだけ置く（コード・DB・`index.html` には書かない）。
+- 送信に成功したら関数が `kintai.slack_reported_at` を記録する。ログインユーザーはこの列を書き込めない（列権限）。memo を編集すると DB のトリガーで印が消える。
+- DB 側の定義：`supabase_setup.sql` の「10.」（初回反映・戻し方は `supabase/migrations/20261112_slack_report.sql`）。
+
+### Webhook URL の用意
+
+Slack の「Incoming Webhooks」を有効にしたアプリで、投稿先チャンネルを選んで URL（`https://hooks.slack.com/services/...`）を発行する。
+Webhook は発行時に選んだチャンネル（または自分宛て DM）に固定される。
+
+### secret の設定・差し替え
+
+```powershell
+# 設定（差し替えも同じコマンド。上書きされる）
+npx supabase secrets set SLACK_WEBHOOK_URL=<ここにURL> --project-ref hgiflgrsvocvdlfnqckp
+
+# 設定されているか確認（値はハッシュで表示される）
+npx supabase secrets list --project-ref hgiflgrsvocvdlfnqckp
+```
+
+- 差し替えは再デプロイ不要。次の送信から新しい URL が使われる。
+- URL は秘密情報。チャットやコミットに貼らない。漏れた場合は Slack 側で Webhook を削除して作り直し、上のコマンドで差し替える。
+
+### デプロイ
+
+```powershell
+npx supabase functions deploy slack-report --project-ref hgiflgrsvocvdlfnqckp
+```
+
+### 送信できないとき
+
+画面のトースト（右下）に理由が出る。詳細は Dashboard > Edge Functions > slack-report > Logs。
+
+| 表示 | 主な原因 |
+|---|---|
+| Slack の送信先（SLACK_WEBHOOK_URL）が未設定です | secret 未設定 |
+| Webhook URL が無効です／無効化または削除されています | URL の誤り、Slack 側で Webhook 削除 |
+| 投稿先の Slack チャンネルが見つかりません／アーカイブされています | チャンネル削除・アーカイブ |
+| 氏名が未登録です | `profiles.name` が空 |
+| 日付が正しくないため報告できません | その行の `date` が空、または `YYYY-MM-DD` の実在する日付でない |
+| 未保存の変更があります | その行を編集中（先に「保存」する） |
+
+---
+
 ## ロール判定の app_metadata 移行（2026-11）
 
 既存環境で `user_metadata.role` から `app_metadata.role` に切り替える一回限りの手順。

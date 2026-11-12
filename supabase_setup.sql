@@ -246,3 +246,44 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION admin_delete_user(uuid) TO authenticated;
+
+-- ============================================================
+-- 10. Slack「作業報告」
+--     ・slack_reported_at（報告日時）は Edge Function「slack-report」
+--       （サービスロール）だけが書き込む。ログインユーザーは列権限で書き込み不可
+--     ・memo が変わったら slack_reported_at を NULL に戻す
+--     既存環境への初回反映・確認 SELECT・戻し方は
+--     supabase/migrations/20261112_slack_report.sql を参照
+-- ============================================================
+BEGIN;
+
+ALTER TABLE public.kintai ADD COLUMN IF NOT EXISTS slack_reported_at timestamptz;
+
+-- テーブル単位の INSERT / UPDATE を外し、アプリが使う列だけ付け直す
+--   INSERT: 新規追加・カレンダー取り込みが使う 7 列
+--   UPDATE: 編集が使う 6 列（user_id は含めない）
+REVOKE INSERT, UPDATE ON public.kintai FROM anon, authenticated;
+GRANT INSERT (date, start_time, end_time, break_min, work_min, memo, user_id)
+  ON public.kintai TO authenticated;
+GRANT UPDATE (date, start_time, end_time, break_min, work_min, memo)
+  ON public.kintai TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.kintai_reset_slack_reported()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+  IF NEW.memo IS DISTINCT FROM OLD.memo THEN
+    NEW.slack_reported_at := NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS kintai_reset_slack_reported ON public.kintai;
+CREATE TRIGGER kintai_reset_slack_reported
+  BEFORE UPDATE OF memo ON public.kintai
+  FOR EACH ROW EXECUTE FUNCTION public.kintai_reset_slack_reported();
+
+COMMIT;

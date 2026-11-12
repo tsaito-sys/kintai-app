@@ -162,6 +162,19 @@
       margin-right: 4px;
     }
     .btn-save-row:hover { background: #bee3f8; }
+    /* Slack 作業報告 */
+    .slack-row { margin-top: 6px; }
+    .btn-slack-row {
+      padding: 4px 10px;
+      background: #f3eef7; color: #4a154b;
+      border: 1px solid #d6c4dd;
+      border-radius: 6px; font-size: 0.78rem;
+      cursor: pointer; transition: background 0.15s;
+    }
+    .btn-slack-row:hover:not(:disabled) { background: #e6d9ec; }
+    .btn-slack-row:disabled { opacity: 0.6; cursor: wait; }
+    .slack-mark { margin-top: 4px; font-size: 0.72rem; color: #276749; font-weight: 600; }
+    .slack-mark:empty { display: none; }
 
     /* ─── 入力チェック ─── */
     label.req::after, th.req::after { content: '＊'; color: #e53e3e; margin-left: 3px; font-weight: 700; }
@@ -1401,6 +1414,8 @@ ${escHtml(r.memo || '')}</textarea></td>
           <td style="white-space:nowrap">
             <button class="btn-save-row" onclick="updateRecord('${r.id}', this)">保存</button>
             <button class="btn-delete" onclick="deleteRecord('${r.id}')">削除</button>
+            <div class="slack-row"><button class="btn-slack-row" onclick="reportToSlack('${r.id}', this)">Slackに報告</button></div>
+            <div class="slack-mark">${slackMarkText(r)}</div>
           </td>
         </tr>
       `).join('');
@@ -1438,7 +1453,11 @@ ${escHtml(r.memo || '')}</textarea></td>
     } else {
       tr.querySelector('.work-time').textContent = formatMin(workMin);
       const rec = records.find(r => String(r.id) === String(id));
-      if (rec) { rec.date = date; rec.start_time = start || null; rec.end_time = end || null; rec.break_min = breakMin; rec.work_min = workMin; rec.memo = memo; }
+      if (rec) {
+        // DB のトリガーと同じく、memo が変わったら報告済みの印を消す
+        if (rec.memo !== memo && rec.slack_reported_at) { rec.slack_reported_at = null; updateSlackMark(tr, rec); }
+        rec.date = date; rec.start_time = start || null; rec.end_time = end || null; rec.break_min = breakMin; rec.work_min = workMin; rec.memo = memo;
+      }
       clearDraft('edit', id);
       renderSummary(records);
       showToast('更新しました');
@@ -1457,6 +1476,90 @@ ${escHtml(r.memo || '')}</textarea></td>
     document.getElementById('sum-hours').textContent = (totalMin / 60).toFixed(2) + ' h';
     document.getElementById('sum-avg').textContent = (avgMin / 60).toFixed(2) + ' h';
     card.style.display = '';
+  }
+
+  // ─── Slack 作業報告 ───────────────────────────────────────
+  // 送信は Edge Function「slack-report」経由（Webhook URL はブラウザに渡さない）。
+  // 投稿文の氏名・作業内容は関数側が DB から読むので、ここでは行 id だけ送る。
+  function formatReportedAt(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  function slackMarkText(r) {
+    return r.slack_reported_at ? `✓ 報告済 ${formatReportedAt(r.slack_reported_at)}` : '';
+  }
+  // 行の日付が日本時間の今日なら ''、それ以外は '11/4（水）'（不正な日付も '' のまま。送信時に関数がエラーにする）
+  function slackDayLabel(dateStr) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr || '');
+    if (!m) return '';
+    const todayJst = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(new Date());
+    if (dateStr === todayJst) return '';
+    const y = +m[1], mo = +m[2], d = +m[3];
+    const w = '日月火水木金土'[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()];
+    return `${mo}/${d}（${w}）`;
+  }
+  function updateSlackMark(tr, rec) {
+    const el = tr?.querySelector('.slack-mark');
+    if (el) el.textContent = slackMarkText(rec);
+  }
+
+  async function reportToSlack(id, btn) {
+    if (!sb) { showToast('データベースに接続されていません', true); return; }
+    const rec = records.find(r => String(r.id) === String(id));
+    if (!rec) { showToast('この勤怠が見つかりません。一覧を更新してください', true); return; }
+    const tr = btn.closest('tr');
+
+    // 未保存の変更（下書き）があれば止める。送るのは保存済みの作業内容
+    if (loadDraft('edit', id)) {
+      showToast('この行に未保存の変更があります。先に「保存」してから報告してください', true, 5000);
+      tr.querySelector('.btn-save-row')?.focus();
+      return;
+    }
+    if (!(rec.memo || '').trim()) {
+      showToast('作業内容が空のため報告できません', true);
+      return;
+    }
+    const force = !!rec.slack_reported_at;
+    // 確認は1回だけ（報告済みなら再送の確認、未報告なら初回の確認）
+    // 今日以外の行は日付を入れる（文言用の判定。投稿文の切り替えは関数側が日本時間で判定する）
+    const day = slackDayLabel(rec.date);
+    const question = force
+      ? `この勤怠は ${formatReportedAt(rec.slack_reported_at)} に報告済みです。\n` +
+        (day ? `${day}分としてもう一度 Slack に送りますか？` : 'もう一度 Slack に送りますか？')
+      : (day ? `${day}分として Slack に報告しますか？` : 'この作業内容を Slack に報告しますか？');
+    if (!confirm(question)) return;
+
+    btn.disabled = true;
+    btn.textContent = '送信中...';
+    try {
+      const { data, error } = await sb.functions.invoke('slack-report', { body: { record_id: id, force } });
+      if (error) {
+        // レスポンス本文は1回しか読めないので、複製を先に読む（本体は extractFnError が読む）
+        let b = null;
+        try { b = await error.context?.clone?.().json(); } catch (_) {}
+        let msg = await extractFnError(error);
+        // 別タブなどで先に報告済みになっていた場合は印を反映
+        if (b?.code === 'already_reported' && b.slack_reported_at) {
+          rec.slack_reported_at = b.slack_reported_at; updateSlackMark(tr, rec);
+          msg += '（もう一度押すと再送できます）';
+        }
+        showToast('Slack への報告に失敗しました: ' + msg, true, 6000);
+        return;
+      }
+      if (data?.slack_reported_at) {
+        rec.slack_reported_at = data.slack_reported_at;
+        updateSlackMark(tr, rec);
+      }
+      if (data?.warning) showToast(data.warning, true, 6000);
+      else showToast('Slack に報告しました');
+    } catch (e) {
+      showToast('Slack への報告に失敗しました: ' + (e.message || e), true, 6000);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Slackに報告';
+    }
   }
 
   // ─── 削除 ─────────────────────────────────────────────────
