@@ -175,6 +175,22 @@
     .btn-slack-row:disabled { opacity: 0.6; cursor: wait; }
     .slack-mark { margin-top: 4px; font-size: 0.72rem; color: #276749; font-weight: 600; }
     .slack-mark:empty { display: none; }
+    /* 連絡事項: 作業内容の欄のすぐ下・同じ横幅・3行ぶんの高さ */
+    .slack-note { margin-top: 6px; }
+    .slack-note label { display: block; }
+    /* ラベルは1行（長い場合は省略）。width:0 + min-width:100% で列幅を押し広げない */
+    .slack-note-label {
+      display: block; width: 0; min-width: 100%;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      font-size: 0.72rem; color: #4a154b; margin-bottom: 2px;
+    }
+    .slack-note textarea {
+      display: block; width: 100%; box-sizing: border-box; resize: vertical;
+      border: 1px solid #d6c4dd; border-radius: 6px; padding: 4px 6px;
+      font-size: 0.85rem; line-height: 1.5; font-family: inherit; background: #fbf9fc;
+      height: calc(0.85rem * 1.5 * 3 + 8px + 2px);
+      min-height: calc(0.85rem * 1.5 * 2 + 8px + 2px);
+    }
 
     /* ─── 入力チェック ─── */
     label.req::after, th.req::after { content: '＊'; color: #e53e3e; margin-left: 3px; font-weight: 700; }
@@ -1419,6 +1435,10 @@ ${escHtml(r.memo || '')}</textarea></td>
           </td>
         </tr>
       `).join('');
+      tbody.querySelectorAll('tr[data-id]').forEach(tr => {
+        const rec = data.find(r => String(r.id) === String(tr.dataset.id));
+        if (rec) updateSlackNote(tr, rec);
+      });
       restoreDrafts(data);
     }
   }
@@ -1457,6 +1477,7 @@ ${escHtml(r.memo || '')}</textarea></td>
         // DB のトリガーと同じく、memo が変わったら報告済みの印を消す
         if (rec.memo !== memo && rec.slack_reported_at) { rec.slack_reported_at = null; updateSlackMark(tr, rec); }
         rec.date = date; rec.start_time = start || null; rec.end_time = end || null; rec.break_min = breakMin; rec.work_min = workMin; rec.memo = memo;
+        updateSlackNote(tr, rec);   // 日付の変更・報告済みの解除で連絡事項欄の表示が変わる
       }
       clearDraft('edit', id);
       renderSummary(records);
@@ -1480,7 +1501,7 @@ ${escHtml(r.memo || '')}</textarea></td>
 
   // ─── Slack 作業報告 ───────────────────────────────────────
   // 送信は Edge Function「slack-report」経由（Webhook URL はブラウザに渡さない）。
-  // 投稿文の氏名・作業内容は関数側が DB から読むので、ここでは行 id だけ送る。
+  // 投稿文の氏名・作業内容は関数側が DB から読むので、ここでは行 id（と連絡事項）だけ送る。
   function formatReportedAt(iso) {
     const d = new Date(iso);
     if (isNaN(d)) return '';
@@ -1503,6 +1524,49 @@ ${escHtml(r.memo || '')}</textarea></td>
   function updateSlackMark(tr, rec) {
     const el = tr?.querySelector('.slack-mark');
     if (el) el.textContent = slackMarkText(rec);
+    updateSlackNote(tr, rec);
+  }
+
+  // ─── 連絡事項（Slack にだけ送る。DB には保存しない） ──────────────
+  // 出す条件: 個人ユーザーの画面で、行の日付（保存済み）が日本時間の今日、かつ未報告。
+  // 入力途中の内容は下書き（kintai_draft:{ユーザーID}:note:{レコードID}）にだけ一時保存する。
+  // 「未保存の変更」扱いにはしない（行の input で編集下書きが作られないよう伝播を止める）。
+  const SLACK_NOTE_MAX = 1000;   // 関数側の NOTE_MAX_CHARS と同じ
+  function todayJstStr() {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(new Date());
+  }
+  function slackNoteVisible(rec) {
+    return currentRole !== 'admin' && !!rec && !rec.slack_reported_at && rec.date === todayJstStr();
+  }
+  function saveNoteDraft(id, text) {
+    if (!text.trim()) { clearDraft('note', id); return; }
+    saveDraft('note', id, { date: todayJstStr(), text });
+  }
+  // 条件に合わせて欄を出す／消す（出すときは今日の下書きだけ復元）
+  function updateSlackNote(tr, rec) {
+    if (!tr) return;
+    const cur = tr.querySelector('.slack-note');
+    if (!slackNoteVisible(rec)) { cur?.remove(); return; }
+    if (cur) return;
+    const anchor = tr.querySelector('.r-memo');   // 作業内容の欄のすぐ下に置く
+    if (!anchor) return;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'slack-note';
+    wrap.innerHTML = `<label><span class="slack-note-label">連絡事項（Slackにのみ送信・保存されません）</span>` +
+      `<textarea class="r-note" rows="3" maxlength="${SLACK_NOTE_MAX}"></textarea></label>`;
+    const ta = wrap.querySelector('textarea');
+    const d = loadDraft('note', rec.id);
+    if (d) {
+      const today = todayJstStr();
+      if (d.date === today && rec.date === today && typeof d.text === 'string') ta.value = d.text;
+      else clearDraft('note', rec.id);
+    }
+    ta.addEventListener('input', e => {
+      e.stopPropagation();
+      saveNoteDraft(rec.id, ta.value);
+    });
+    anchor.after(wrap);
   }
 
   async function reportToSlack(id, btn) {
@@ -1521,6 +1585,19 @@ ${escHtml(r.memo || '')}</textarea></td>
       showToast('作業内容が空のため報告できません', true);
       return;
     }
+    // 欄を出した後に日付が変わって今日の行でなくなっていたら、欄を閉じて止める
+    const shownNote = tr.querySelector('.r-note');
+    if (shownNote && !slackNoteVisible(rec)) {
+      const had = shownNote.value.trim();
+      clearDraft('note', id);
+      updateSlackNote(tr, rec);
+      if (had) {
+        showToast('日付が変わったため連絡事項欄を閉じました。報告する場合はもう一度押してください', true, 6000);
+        return;
+      }
+    }
+    const noteEl = tr.querySelector('.r-note');
+    const note = noteEl ? noteEl.value : '';
     const force = !!rec.slack_reported_at;
     // 確認は1回だけ（報告済みなら再送の確認、未報告なら初回の確認）
     // 今日以外の行は日付を入れる（文言用の判定。投稿文の切り替えは関数側が日本時間で判定する）
@@ -1533,8 +1610,11 @@ ${escHtml(r.memo || '')}</textarea></td>
 
     btn.disabled = true;
     btn.textContent = '送信中...';
+    if (noteEl) noteEl.readOnly = true;   // 送信中に書き足した分が消えないように
     try {
-      const { data, error } = await sb.functions.invoke('slack-report', { body: { record_id: id, force } });
+      const body = { record_id: id, force };
+      if (note.trim()) body.note = note;   // 空なら今までと同じリクエスト
+      const { data, error } = await sb.functions.invoke('slack-report', { body });
       if (error) {
         // レスポンス本文は1回しか読めないので、複製を先に読む（本体は extractFnError が読む）
         let b = null;
@@ -1548,6 +1628,9 @@ ${escHtml(r.memo || '')}</textarea></td>
         showToast('Slack への報告に失敗しました: ' + msg, true, 6000);
         return;
       }
+      // Slack には送れたので連絡事項は破棄（報告済みになれば欄も消える）
+      clearDraft('note', id);
+      if (noteEl) noteEl.value = '';
       if (data?.slack_reported_at) {
         rec.slack_reported_at = data.slack_reported_at;
         updateSlackMark(tr, rec);
@@ -1559,6 +1642,7 @@ ${escHtml(r.memo || '')}</textarea></td>
     } finally {
       btn.disabled = false;
       btn.textContent = 'Slackに報告';
+      if (noteEl) noteEl.readOnly = false;
     }
   }
 
@@ -1568,6 +1652,7 @@ ${escHtml(r.memo || '')}</textarea></td>
     const { error } = await sb.from(TABLE).delete().eq('id', id);
     if (error) { showToast('削除失敗: ' + error.message, true); return; }
     clearDraft('edit', id);
+    clearDraft('note', id);
     showToast('削除しました');
     loadRecords();
   }

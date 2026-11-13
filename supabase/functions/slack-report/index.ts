@@ -1,6 +1,7 @@
 // Slack「作業報告」Edge Function
 //
-// リクエスト: POST { record_id: <kintai.id>, force?: boolean }
+// リクエスト: POST { record_id: <kintai.id>, force?: boolean, note?: string }
+//   ・note（連絡事項）は作業内容の後ろに空行を挟んで足す。保存せず、ログにも出さない
 //   ・呼び出したユーザー本人の勤怠行だけ送れる
 //   ・投稿文の氏名・memo はブラウザから受け取らず、DB から読む
 //   ・既に報告済みの行は force: true のときだけ再送する
@@ -17,6 +18,8 @@ const CORS = {
 }
 
 const SLACK_TIMEOUT_MS = 10_000
+// 連絡事項の上限（前後の空白を除いた文字数。サロゲートペアは1文字）
+const NOTE_MAX_CHARS = 1000
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -38,7 +41,7 @@ Deno.serve(async (req) => {
     if (authErr || !user) return fail(401, 'unauthorized', 'ログインの有効期限が切れています。再ログインしてください')
 
     // ── 2. 入力 ──
-    let body: { record_id?: unknown; force?: unknown }
+    let body: { record_id?: unknown; force?: unknown; note?: unknown }
     try { body = await req.json() } catch { return fail(400, 'bad_request', 'リクエストの形式が不正です') }
     const recordId = body.record_id
     if (recordId === undefined || recordId === null || recordId === '' ||
@@ -46,6 +49,11 @@ Deno.serve(async (req) => {
       return fail(400, 'bad_request', 'record_id は必須です')
     }
     const force = body.force === true
+    // 連絡事項（任意・保存しない・ログにも出さない）。文字列以外は無視し、前後の空白を除く
+    const note = typeof body.note === 'string' ? body.note.trim() : ''
+    if (Array.from(note).length > NOTE_MAX_CHARS) {
+      return fail(400, 'note_too_long', `連絡事項は${NOTE_MAX_CHARS}文字以内にしてください`)
+    }
 
     const webhookUrl = Deno.env.get('SLACK_WEBHOOK_URL')
     if (!webhookUrl) return fail(500, 'webhook_not_configured', 'Slack の送信先（SLACK_WEBHOOK_URL）が未設定です。管理者に連絡してください')
@@ -89,12 +97,13 @@ Deno.serve(async (req) => {
     //   今日（送信時点の日本時間）の行は「本日の業務を終了します。」、それ以外は「11/4（水）分の作業報告です。」
     const isToday = rec.date === todayJst()
     const text =
-      `${slackEscape(name)}\n` +
+      `*― ${slackBoldSafe(name)} ―*\n` +
       'お疲れ様です。\n' +
       (isToday ? '本日の業務を終了します。\n' : `${formatMdW(ymd)}分の作業報告です。\n`) +
       '\n' +
       '【やったこと】\n' +
-      slackEscape(memo)
+      slackEscape(memo) +
+      (note ? '\n\n' + slackEscape(note) : '')
 
     let slackRes: Response
     try {
@@ -173,6 +182,13 @@ function formatMdW({ y, m, d }: { y: number; m: number; d: number }) {
 // Slack の制御文字（< > &）を無効化する。<!channel> などのメンションやリンク記法も無効になる
 function slackEscape(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+// 太字（*…*）の中に入れる文字列用。slackEscape に加えて、
+// Slack にはエスケープ記法が無いので書式記号を見た目の近い全角に置き換え、改行などの空白は1つの半角スペースにする
+function slackBoldSafe(s: string) {
+  const wide: Record<string, string> = { '*': '＊', '_': '＿', '~': '～', '`': '｀' }
+  return slackEscape(s).replace(/[*_~`]/g, (c) => wide[c]).replace(/\s+/g, ' ')
 }
 
 // Incoming Webhook のエラー応答を日本語に
