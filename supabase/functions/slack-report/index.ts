@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
     //   今日（送信時点の日本時間）の行は「本日の業務を終了します。」、それ以外は「11/4（水）分の作業報告です。」
     const isToday = rec.date === todayJst()
     const text =
-      `*― ${slackBoldSafe(name)} ―*\n` +
+      `― ${slackEscape(name.replace(/\s+/g, ' '))} ―\n` +   // 氏名中の改行などは半角スペース1つに
       'お疲れ様です。\n' +
       (isToday ? '本日の業務を終了します。\n' : `${formatMdW(ymd)}分の作業報告です。\n`) +
       '\n' +
@@ -184,12 +184,6 @@ function slackEscape(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-// 太字（*…*）の中に入れる文字列用。slackEscape に加えて、
-// Slack にはエスケープ記法が無いので書式記号を見た目の近い全角に置き換え、改行などの空白は1つの半角スペースにする
-function slackBoldSafe(s: string) {
-  const wide: Record<string, string> = { '*': '＊', '_': '＿', '~': '～', '`': '｀' }
-  return slackEscape(s).replace(/[*_~`]/g, (c) => wide[c]).replace(/\s+/g, ' ')
-}
 
 // Incoming Webhook のエラー応答を日本語に
 // https://api.slack.com/messaging/webhooks#handling_errors
