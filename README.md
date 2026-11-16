@@ -8,6 +8,7 @@
 | `supabase_setup.sql` | テーブル・RLS・SQL 関数の定義（SQL Editor で実行。何度実行しても同じ結果になる） |
 | `supabase/functions/admin-user/` | Edge Function：管理者によるユーザー作成・削除 |
 | `supabase/migrations/` | 既存環境向けの一回限りの移行 SQL |
+| `supabase/checks/` | 本番 DB の定義・データの状態を確かめる読み取り専用 SQL（SQL Editor で 1 ブロックずつ実行） |
 
 ## ロール（管理者）について
 
