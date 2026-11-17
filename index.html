@@ -120,6 +120,13 @@
     }
     .filter-row .form-group { flex: none; }
     .filter-row input[type=date] { width: auto; }
+    .filter-select {
+      padding: 9px 12px; border: 1px solid #cbd5e0; border-radius: 8px;
+      font-size: 0.9rem; background: #f7fafc; color: #2d3748;
+    }
+    /* 表示月: ◀ 年 月 ▶ */
+    .month-picker { display: flex; gap: 6px; align-items: center; }
+    .month-picker .month-nav { padding: 9px 12px; }
 
     /* ─── 勤怠一覧: 集計＋フィルター 横1段 ─── */
     .list-toolbar {
@@ -137,7 +144,21 @@
     tr:last-child td { border-bottom: none; }
     tbody tr:hover { background: #f0f7ff; }
     td.memo-cell { min-width: 200px; white-space: pre-wrap; word-break: break-word; }
-    #records-table th.memo-col { width: 100%; } /* 余り幅はすべて作業内容列へ */
+    /* 勤怠一覧: 列幅を見出しで固定する（行の有無・月の切り替えで幅が変わらないように）
+       幅は padding 込み（border-box）。作業内容の列は幅を指定せず、余りをすべて使う。
+       min-width ＝ 固定列の合計 ＋ 作業内容 224px（これより狭い画面では横スクロール） */
+    #records-table { table-layout: fixed; min-width: 1030px; }
+    #records-table th.c-date  { width: 176px; } /* 日付 input 150px */
+    #records-table th.c-time  { width: 126px; } /* 時刻 input 100px */
+    #records-table th.c-break { width: 100px; } /* 休憩 input 52px ＋「分」 */
+    #records-table th.c-work  { width: 108px; } /* 「23時間59分」 */
+    #records-table th.c-act   { width: 168px; } /* 保存・削除（追加行は 保存・キャンセル）・Slackに報告 */
+    #records-table.is-admin { min-width: 800px; }
+    #records-table.is-admin th.c-name  { width: 144px; }
+    #records-table.is-admin th.c-date  { width: 110px; }
+    #records-table.is-admin th.c-time  { width: 70px; }
+    #records-table.is-admin th.c-break { width: 70px; }
+    #records-table td.name-cell { overflow-wrap: anywhere; } /* 長い氏名は列内で折り返す */
     /* 作業内容 textarea: 5行分きっちり表示
        font-size 0.85rem × line-height 1.5 × 5行 + 上下padding 4px×2 + 上下border 1px×2 (border-box) */
     textarea.memo-textarea {
@@ -643,6 +664,17 @@
 
     <!-- フィルター -->
     <div class="filter-row">
+      <!-- 表示月: 選ぶと開始日・終了日にその月の1日〜末日が入る。
+           開始日・終了日がちょうど1か月でないときは年・月とも空（—）になる -->
+      <div class="form-group">
+        <label>表示月</label>
+        <div class="month-picker">
+          <button type="button" class="btn btn-secondary month-nav" onclick="shiftFilterMonth(-1)" title="前の月" aria-label="前の月">◀</button>
+          <select id="filter-year" class="filter-select" onchange="onFilterMonthSelect()" aria-label="年"></select>
+          <select id="filter-month" class="filter-select" onchange="onFilterMonthSelect()" aria-label="月"></select>
+          <button type="button" class="btn btn-secondary month-nav" onclick="shiftFilterMonth(1)" title="次の月" aria-label="次の月">▶</button>
+        </div>
+      </div>
       <div class="form-group">
         <label>開始日</label>
         <input type="date" id="filter-from" onchange="loadRecords()" />
@@ -1360,8 +1392,12 @@
   }
 
   // ─── 一覧取得 ──────────────────────────────────────────────
+  // 月を続けて切り替えたとき、遅れて返った古い結果で上書きしないための通し番号
+  let loadRecordsSeq = 0;
+
   async function loadRecords() {
     if (!sb) return;
+    const seq = ++loadRecordsSeq;
 
     // 期間が未指定（初回表示・入力を消した場合）は今月を入れる
     if (!document.getElementById('filter-from').value || !document.getElementById('filter-to').value) {
@@ -1369,6 +1405,7 @@
     }
     const from = document.getElementById('filter-from').value;
     const to   = document.getElementById('filter-to').value;
+    syncFilterMonth();
 
     let query = sb.from(TABLE).select('*').order('date', { ascending: true });
     query = query.gte('date', from).lte('date', to);
@@ -1380,6 +1417,7 @@
     }
 
     const { data, error } = await query;
+    if (seq !== loadRecordsSeq) return; // もっと新しい取得が始まっている
     if (error) { showToast('取得失敗: ' + error.message, true); return; }
 
     records = data || [];
@@ -1393,9 +1431,11 @@
     const theadTr = document.querySelector('#records-table thead tr');
 
     // 見出しはデータ0件でもロールに合わせる（個人ユーザーは必須項目に＊）
+    // 列幅は見出しの c-* クラスで固定（CSS の #records-table を参照）
+    document.getElementById('records-table').classList.toggle('is-admin', currentRole === 'admin');
     theadTr.innerHTML = currentRole === 'admin'
-      ? '<th>氏名</th><th>日付</th><th>出勤</th><th>退勤</th><th>休憩</th><th>実労働時間</th><th class="memo-col">作業内容</th>'
-      : '<th class="req">日付</th><th class="req">出勤</th><th class="req">退勤</th><th class="req">休憩</th><th>実労働時間</th><th class="memo-col req">作業内容</th><th></th>';
+      ? '<th class="c-name">氏名</th><th class="c-date">日付</th><th class="c-time">出勤</th><th class="c-time">退勤</th><th class="c-break">休憩</th><th class="c-work">実労働時間</th><th class="memo-col">作業内容</th>'
+      : '<th class="c-date req">日付</th><th class="c-time req">出勤</th><th class="c-time req">退勤</th><th class="c-break req">休憩</th><th class="c-work">実労働時間</th><th class="memo-col req">作業内容</th><th class="c-act"></th>';
 
     if (!data.length) {
       tbody.innerHTML = '<tr><td colspan="7" id="empty-msg">データがありません</td></tr>';
@@ -1408,7 +1448,7 @@
     if (currentRole === 'admin') {
       tbody.innerHTML = data.map(r => `
         <tr data-id="${r.id}">
-          <td style="white-space:nowrap">${escHtml(allProfiles[r.user_id] || '（不明）')}</td>
+          <td class="name-cell">${escHtml(allProfiles[r.user_id] || '（不明）')}</td>
           <td>${escHtml(r.date)}</td>
           <td>${escHtml(r.start_time || '–')}</td>
           <td>${escHtml(r.end_time || '–')}</td>
@@ -1485,17 +1525,16 @@ ${escHtml(r.memo || '')}</textarea></td>
     }
   }
 
+  // 集計は本人・管理者とも、データがない月も表示する（絞り込み欄の位置を変えないため）
+  // 管理者は選択中のユーザーの集計になる
   function renderSummary(data) {
     const card = document.getElementById('summary-card');
-    if (!data.length || currentRole === 'admin') { card.style.display = 'none'; return; }
-
     const totalMin = data.reduce((s, r) => s + (r.work_min || 0), 0);
     const days = data.length;
-    const avgMin = Math.round(totalMin / days);
 
-    document.getElementById('sum-days').textContent = days + ' 日';
-    document.getElementById('sum-hours').textContent = (totalMin / 60).toFixed(2) + ' h';
-    document.getElementById('sum-avg').textContent = (avgMin / 60).toFixed(2) + ' h';
+    document.getElementById('sum-days').textContent  = days + ' 日';
+    document.getElementById('sum-hours').textContent = days ? (totalMin / 60).toFixed(2) + ' h' : '0 h';
+    document.getElementById('sum-avg').textContent   = days ? (Math.round(totalMin / days) / 60).toFixed(2) + ' h' : '— h';
     card.style.display = '';
   }
 
@@ -1701,10 +1740,14 @@ ${escHtml(r.memo || '')}</textarea></td>
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const from = document.getElementById('filter-from').value;
+    const to   = document.getElementById('filter-to').value;
+    // ちょうど1か月なら「2026年11月分」、それ以外は「20261015-20261114」
+    const month = wholeMonthOf(from, to);
     let dateLabel = '';
-    if (from) {
-      const d = new Date(from);
-      dateLabel = `${d.getFullYear()}年${d.getMonth()+1}月分`;
+    if (month) {
+      dateLabel = `${month.y}年${month.m}月分`;
+    } else if (from && to) {
+      dateLabel = `${from.replace(/-/g, '')}-${to.replace(/-/g, '')}`;
     }
     a.href = url;
     a.download = `${namePrefix}_${dateLabel}勤怠データ.csv`;
@@ -1741,13 +1784,92 @@ ${escHtml(r.memo || '')}</textarea></td>
     }
   }
 
+  // ─── 勤怠一覧の表示月 ──────────────────────────────────────
+  // 月は 1〜12 で扱う
+
+  // 勤怠一覧の期間を「y 年 m 月の1日〜末日」にする
+  function setFilterMonth(y, m) {
+    document.getElementById('filter-from').value = new Date(y, m - 1, 1).toLocaleDateString('sv');
+    document.getElementById('filter-to').value   = new Date(y, m, 0).toLocaleDateString('sv');
+  }
+
   // 勤怠一覧の期間を「今日を含む月の1日〜末日」にする
   function setFilterThisMonth() {
     const now = new Date();
-    const first = new Date(now.getFullYear(), now.getMonth(), 1);
-    const last  = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    document.getElementById('filter-from').value = first.toLocaleDateString('sv');
-    document.getElementById('filter-to').value   = last.toLocaleDateString('sv');
+    setFilterMonth(now.getFullYear(), now.getMonth() + 1);
+  }
+
+  // 'YYYY-MM-DD' を { y, m, d } に（形が違えば null）
+  function parseYmd(s) {
+    const mt = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
+    return mt ? { y: +mt[1], m: +mt[2], d: +mt[3] } : null;
+  }
+
+  // from〜to がちょうど1か月（1日〜末日）なら { y, m }、そうでなければ null
+  function wholeMonthOf(from, to) {
+    const f = parseYmd(from);
+    if (!f || f.d !== 1 || f.m < 1 || f.m > 12) return null;
+    return to === new Date(f.y, f.m, 0).toLocaleDateString('sv') ? { y: f.y, m: f.m } : null;
+  }
+
+  // 年・月のプルダウンを作る（年は今年の5年前〜来年。範囲外の年は必要になったときに足す）
+  (function initFilterMonthOptions() {
+    const ySel = document.getElementById('filter-year');
+    const mSel = document.getElementById('filter-month');
+    ySel.add(new Option('—', ''));
+    const thisYear = new Date().getFullYear();
+    for (let y = thisYear - 5; y <= thisYear + 1; y++) ySel.add(new Option(`${y}年`, String(y)));
+    mSel.add(new Option('—', ''));
+    for (let m = 1; m <= 12; m++) mSel.add(new Option(`${m}月`, String(m)));
+  })();
+
+  function ensureYearOption(y) {
+    const ySel = document.getElementById('filter-year');
+    if ([...ySel.options].some(o => o.value === String(y))) return;
+    // 年の順に差し込む（先頭の「—」の後ろ）
+    const after = [...ySel.options].find(o => o.value && Number(o.value) > y) || null;
+    ySel.add(new Option(`${y}年`, String(y)), after);
+  }
+
+  // 開始日・終了日に合わせて年・月のプルダウンを表示する（ちょうど1か月でなければ空）
+  function syncFilterMonth() {
+    const month = wholeMonthOf(document.getElementById('filter-from').value,
+                               document.getElementById('filter-to').value);
+    if (month) ensureYearOption(month.y);
+    document.getElementById('filter-year').value  = month ? String(month.y) : '';
+    document.getElementById('filter-month').value = month ? String(month.m) : '';
+  }
+
+  // ◀ ▶ や片方だけ選んだときの基準の月（プルダウン → 開始日 → 今月 の順）
+  function filterBaseMonth() {
+    const y = Number(document.getElementById('filter-year').value);
+    const m = Number(document.getElementById('filter-month').value);
+    if (y && m) return { y, m };
+    const f = parseYmd(document.getElementById('filter-from').value);
+    if (f && f.m >= 1 && f.m <= 12) return { y: f.y, m: f.m };
+    const now = new Date();
+    return { y: now.getFullYear(), m: now.getMonth() + 1 };
+  }
+
+  // 前の月（-1）・次の月（+1）へ
+  function shiftFilterMonth(delta) {
+    const base = filterBaseMonth();
+    const d = new Date(base.y, base.m - 1 + delta, 1);
+    setFilterMonth(d.getFullYear(), d.getMonth() + 1);
+    loadRecords();
+  }
+
+  // 年・月のプルダウンを選んだとき（空の側は開始日の年・月で補う）
+  function onFilterMonthSelect() {
+    const ySel = document.getElementById('filter-year');
+    const mSel = document.getElementById('filter-month');
+    if (!ySel.value && !mSel.value) { syncFilterMonth(); return; } // 「—」を選んだだけなら元に戻す
+    const base = parseYmd(document.getElementById('filter-from').value) ||
+                 { y: new Date().getFullYear(), m: new Date().getMonth() + 1 };
+    const y = Number(ySel.value) || base.y;
+    const m = Number(mSel.value) || base.m;
+    setFilterMonth(y, m);
+    loadRecords();
   }
 
   function clearFilter() {
