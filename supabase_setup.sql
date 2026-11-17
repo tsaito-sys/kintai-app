@@ -397,3 +397,68 @@ REVOKE ALL ON SEQUENCE public.kintai_id_seq FROM anon;
 
 REVOKE ALL ON TABLE public.profiles FROM anon;
 REVOKE TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE public.profiles FROM authenticated;
+
+-- ============================================================
+-- 12. カレンダー取り込み用 SQL 関数 import_kintai_rows
+--     画面（index.html の importGcalRecords）から rpc で 1 回呼ぶ。
+--     「取り込む日付の自分の行を消す → 選んだ行を追加する」を 1 つのトランザクションで行い、
+--     途中で失敗したら消した分も含めて全部取り消す。
+--     ・SECURITY INVOKER（本人の権限で動く）。RLS・列ごとの権限（10.）・NOT NULL・CHECK（0-2.）がそのまま効く
+--     ・user_id は auth.uid() を使い、画面からは受け取らない
+--     ・work_min は画面で計算した値をそのまま使う
+--     ・追加した行数を返す
+--     既存環境への初回反映・確認・戻し方は
+--     supabase/migrations/20261117_kintai_import_rpc.sql を参照
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.import_kintai_rows(p_rows jsonb)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+DECLARE
+  v_uid   uuid := auth.uid();
+  v_count integer;
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'ログインしていません。再ログインしてください'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- OR の評価順は決まっていないため、配列かどうかを確かめてから長さを見る
+  IF p_rows IS NULL OR jsonb_typeof(p_rows) <> 'array' THEN
+    RAISE EXCEPTION '取り込む行の形式が正しくありません（配列ではありません）'
+      USING ERRCODE = '22023';
+  END IF;
+  IF jsonb_array_length(p_rows) = 0 THEN
+    RAISE EXCEPTION '取り込む行がありません'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- 取り込む日付の自分の行を消す
+  DELETE FROM public.kintai AS k
+  WHERE k.user_id = v_uid
+    AND k.date IN (
+      SELECT r.date
+      FROM jsonb_to_recordset(p_rows) AS r(date text)
+    );
+
+  -- 追加する（列の型は kintai の定義に合わせる。user_id は auth.uid()）
+  INSERT INTO public.kintai (date, start_time, end_time, break_min, work_min, memo, user_id)
+  SELECT r.date, r.start_time, r.end_time, r.break_min, r.work_min, r.memo, v_uid
+  FROM jsonb_to_recordset(p_rows) AS r(
+    date       text,
+    start_time text,
+    end_time   text,
+    break_min  integer,
+    work_min   integer,
+    memo       text
+  );
+
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.import_kintai_rows(jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.import_kintai_rows(jsonb) TO authenticated;

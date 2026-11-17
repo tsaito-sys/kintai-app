@@ -2252,29 +2252,52 @@ ${escHtml(r.memo || '')}</textarea></td>
       const [eh, em] = end.split(':').map(Number);
       let workMin = (eh * 60 + em) - (sh * 60 + sm) - breakMin;
       if (workMin < 0) workMin = 0;
-      return { date, start_time: start, end_time: end, break_min: breakMin, work_min: workMin, memo, user_id: currentUser.id };
+      // user_id は送らない（SQL 関数が auth.uid() を使う）
+      return { date, start_time: start, end_time: end, break_min: breakMin, work_min: workMin, memo };
     });
 
     const btn = document.getElementById('gcal-import-btn');
     btn.disabled = true;
     btn.textContent = '取り込み中...';
 
-    // 同じ日付の既存データを削除してから挿入（上書き）
-    const dates = rows.map(r => r.date);
-    await sb.from(TABLE).delete().in('date', dates);
-    const { error } = await sb.from(TABLE).insert(rows);
-
-    btn.disabled = false;
-    btn.textContent = '選択した日程を取り込む';
-
-    if (error) {
-      showToast('取り込み失敗: ' + error.message, true);
-    } else {
-      showToast(`${rows.length}件を取り込みました`);
+    // 同じ日付の自分の行を消してから追加（上書き）。
+    // SQL 関数 import_kintai_rows（supabase_setup.sql 12.）が 1 つのトランザクションで行うので、
+    // 失敗したときは消した行も元に戻る
+    try {
+      const { data, error } = await sb.rpc('import_kintai_rows', { p_rows: rows });
+      if (error) {
+        showToast(importErrorMessage(error), true, 8000);
+        return;
+      }
+      showToast(`${data ?? rows.length}件を取り込みました`);
       document.getElementById('gcal-preview').style.display = 'none';
       gcalPreviewData = [];
       loadRecords();
+    } catch (e) {
+      showToast('取り込み失敗: ' + (e?.message || e), true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '選択した日程を取り込む';
     }
+  }
+
+  // 取り込みのエラーを画面に出す文にする。
+  // CHECK 制約（SQLSTATE 23514）ではじかれたときは、制約名から直す値を案内する
+  const IMPORT_CHECK_MESSAGES = {
+    kintai_break_min_nonneg_chk:  '休憩の値を確認してください（0 以上の分数）',
+    kintai_work_min_nonneg_chk:   '実労働時間がマイナスになります。出勤・退勤・休憩の値を確認してください',
+    kintai_start_time_format_chk: '出勤の時刻を確認してください（00:00〜23:59）',
+    kintai_end_time_format_chk:   '退勤の時刻を確認してください（00:00〜23:59）',
+    kintai_date_format_chk:       '日付を確認してください',
+  };
+  function importErrorMessage(error) {
+    const msg = error?.message || '';
+    if (error?.code === '23514') {
+      const name = Object.keys(IMPORT_CHECK_MESSAGES).find(k => msg.includes(k));
+      return `取り込めませんでした: ${name ? IMPORT_CHECK_MESSAGES[name] : '入力した値を確認してください'}`
+           + '（勤怠は変更していません）';
+    }
+    return '取り込み失敗: ' + msg;
   }
 
   // ─── 追加明細行 ───────────────────────────────────────────
