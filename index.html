@@ -1318,7 +1318,8 @@
 
   // ─── 勤務時間の計算 ───────────────────────────────────────
   // DB のトリガー kintai_compute_work_min（supabase_setup.sql 13.）と同じルール。
-  // 保存される work_min は DB が計算し直した値で、画面の計算は入力チェックと表示の目安に使う。
+  // work_min は画面からは送らず、DB のトリガーが計算して保存する。
+  // 画面の計算は、保存前の入力チェックと追加行の表示（目安）にだけ使う。
   //   ・勤務時間 ＝ 退勤 − 出勤 − 休憩（分）。退勤が出勤より前なら翌日の退勤として +1440 分
   //   ・error: 'same'（出勤と退勤が同じ時刻）/ 'nonpositive'（0 分以下）/ 'over'（720 分超え）
   //            / 'invalid'（時刻が 'HH:MM' でない・休憩が数でない）/ null（問題なし）
@@ -1367,8 +1368,8 @@
       errors.push({ el: f.breakMin, msg: `休憩は勤務時間（${calc.span}分）未満にしてください` });
 
     if (showFieldErrors(errors)) return null;
-    // 保存される値は DB が計算し直す（同じルールなので通常は一致する）
-    return { date, start, end, breakMin, workMin: calc.workMin, memo };
+    // work_min は返さない（送らない）。保存時に DB のトリガーが同じルールで計算する
+    return { date, start, end, breakMin, memo };
   }
 
   // CHECK 制約・勤務時間のトリガーではじかれたとき（SQLSTATE 23514）の案内文。
@@ -1410,7 +1411,7 @@
       date: $('add-date'), start: $('add-start'), end: $('add-end'), breakMin: $('add-break'), memo: $('add-memo')
     });
     if (!v) return;
-    const { date, start: start_time, end: end_time, breakMin: break_min, workMin: work_min, memo } = v;
+    const { date, start: start_time, end: end_time, breakMin: break_min, memo } = v;
 
     btn.disabled = true;
     btn.textContent = '確認中...';
@@ -1420,7 +1421,8 @@
       return;
     }
     btn.textContent = '保存中...';
-    const { error } = await sb.from(TABLE).insert([{ date, start_time, end_time, break_min, work_min, memo, user_id: currentUser.id }]);
+    // work_min は送らない（DB のトリガーが計算する）。保存後は一覧を読み直して DB の値を表示する
+    const { error } = await sb.from(TABLE).insert([{ date, start_time, end_time, break_min, memo, user_id: currentUser.id }]);
 
     if (error) {
       btn.disabled = false;
@@ -1538,7 +1540,7 @@ ${escHtml(r.memo || '')}</textarea></td>
       breakMin: tr.querySelector('.r-break'), memo: tr.querySelector('.r-memo')
     });
     if (!v) return;
-    const { date, start, end, breakMin, workMin, memo } = v;
+    const { date, start, end, breakMin, memo } = v;
 
     btn.disabled = true;
     btn.textContent = '確認中...';
@@ -1548,10 +1550,11 @@ ${escHtml(r.memo || '')}</textarea></td>
       return;
     }
     btn.textContent = '保存中...';
-    // work_min は DB のトリガーが計算し直すので、保存後の値を返してもらって表示に使う
+    // work_min は送らない（DB のトリガーが出勤・退勤・休憩から計算する）。
+    // 保存後の値を返してもらって表示に使う
     const { data, error } = await sb.from(TABLE).update({
       date, start_time: start || null, end_time: end || null,
-      break_min: breakMin, work_min: workMin, memo
+      break_min: breakMin, memo
     }).eq('id', id).select('work_min');
     btn.disabled = false;
     btn.textContent = '保存';
@@ -2223,7 +2226,9 @@ ${escHtml(r.memo || '')}</textarea></td>
         const end   = d.ends.sort().reverse()[0];
         const [sh, sm] = start.split(':').map(Number);
         const [eh, em] = end.split(':').map(Number);
-        const spanMin = (eh * 60 + em) - (sh * 60 + sm);
+        let spanMin = (eh * 60 + em) - (sh * 60 + sm);
+        // 退勤が出勤より前（翌日に終わる予定）は翌日の退勤として +1440 分（calcWorkMin と同じ考え方）
+        if (spanMin < 0) spanMin += 24 * 60;
         return { date, start, end, memo: '', breakMin: calcBreakMin(spanMin) };
       });
 
@@ -2302,12 +2307,10 @@ ${escHtml(r.memo || '')}</textarea></td>
       const end      = document.querySelector(`.gcal-in-end[data-idx="${i}"]`).value   || row.end;
       const breakMin = parseInt(document.querySelector(`.gcal-in-break[data-idx="${i}"]`).value) || 0;
       const memo     = document.querySelector(`.gcal-in-memo[data-idx="${i}"]`).value;
-      // work_min は DB のトリガーが計算し直して上書きする（ここでは入力チェックをしない）。
-      // 計算できない・0 以下のときは 0 を送り、DB の CHECK 制約・トリガーのエラーに任せる
-      const calc     = calcWorkMin(start, end, breakMin);
-      const workMin  = Number.isFinite(calc.workMin) && calc.workMin > 0 ? calc.workMin : 0;
-      // user_id は送らない（SQL 関数が auth.uid() を使う）
-      return { date, start_time: start, end_time: end, break_min: breakMin, work_min: workMin, memo };
+      // work_min は送らない（DB のトリガーが計算する。ここでは入力チェックをしない。
+      // 不正な値は DB の CHECK 制約・トリガーのエラーになる）
+      // user_id も送らない（SQL 関数が auth.uid() を使う）
+      return { date, start_time: start, end_time: end, break_min: breakMin, memo };
     });
 
     const btn = document.getElementById('gcal-import-btn');
