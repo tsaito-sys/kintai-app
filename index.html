@@ -1365,7 +1365,6 @@
     else if (!breakOk) errors.push({ el: f.breakMin, msg: '0以上の整数で入力してください' });
     else if (calc?.error === 'nonpositive')
       errors.push({ el: f.breakMin, msg: `休憩は勤務時間（${calc.span}分）未満にしてください` });
-    if (!memo.trim()) errors.push({ el: f.memo, msg: '作業内容を入力してください' });
 
     if (showFieldErrors(errors)) return null;
     // 保存される値は DB が計算し直す（同じルールなので通常は一致する）
@@ -1483,7 +1482,7 @@
     document.getElementById('records-table').classList.toggle('is-admin', currentRole === 'admin');
     theadTr.innerHTML = currentRole === 'admin'
       ? '<th class="c-name">氏名</th><th class="c-date">日付</th><th class="c-time">出勤</th><th class="c-time">退勤</th><th class="c-break">休憩</th><th class="c-work">実労働時間</th><th class="memo-col">作業内容</th>'
-      : '<th class="c-date req">日付</th><th class="c-time req">出勤</th><th class="c-time req">退勤</th><th class="c-break req">休憩</th><th class="c-work">実労働時間</th><th class="memo-col req">作業内容</th><th class="c-act"></th>';
+      : '<th class="c-date req">日付</th><th class="c-time req">出勤</th><th class="c-time req">退勤</th><th class="c-break req">休憩</th><th class="c-work">実労働時間</th><th class="memo-col">作業内容</th><th class="c-act"></th>';
 
     if (!data.length) {
       tbody.innerHTML = '<tr><td colspan="7" id="empty-msg">データがありません</td></tr>';
