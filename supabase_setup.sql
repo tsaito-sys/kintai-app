@@ -406,10 +406,12 @@ REVOKE TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE public.profiles FROM aut
 --     途中で失敗したら消した分も含めて全部取り消す。
 --     ・SECURITY INVOKER（本人の権限で動く）。RLS・列ごとの権限（10.）・NOT NULL・CHECK（0-2.）がそのまま効く
 --     ・user_id は auth.uid() を使い、画面からは受け取らない
---     ・work_min は画面から受け取るが、DB のトリガー（13.）が計算した値で上書きする
+--     ・work_min は受け取らず、INSERT もしない。INSERT 時に DB のトリガー（13.）が計算して入れる
+--       （行データに work_min の key があっても読み飛ばす）
 --     ・追加した行数を返す
 --     既存環境への初回反映・確認・戻し方は
---     supabase/migrations/20261117_kintai_import_rpc.sql を参照
+--     supabase/migrations/20261117_kintai_import_rpc.sql と
+--     supabase/migrations/20261118_kintai_work_min_cleanup_1.sql（work_min を受け取らない形に変更）を参照
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.import_kintai_rows(p_rows jsonb)
 RETURNS integer
@@ -445,14 +447,15 @@ BEGIN
     );
 
   -- 追加する（列の型は kintai の定義に合わせる。user_id は auth.uid()）
-  INSERT INTO public.kintai (date, start_time, end_time, break_min, work_min, memo, user_id)
-  SELECT r.date, r.start_time, r.end_time, r.break_min, r.work_min, r.memo, v_uid
+  -- 勤務時間は kintai の BEFORE INSERT トリガーが計算して入れる。
+  -- 行データに勤務時間の key があっても、下の列の定義にないので読み飛ばす
+  INSERT INTO public.kintai (date, start_time, end_time, break_min, memo, user_id)
+  SELECT r.date, r.start_time, r.end_time, r.break_min, r.memo, v_uid
   FROM jsonb_to_recordset(p_rows) AS r(
     date       text,
     start_time text,
     end_time   text,
     break_min  integer,
-    work_min   integer,
     memo       text
   );
 
@@ -474,13 +477,17 @@ GRANT EXECUTE ON FUNCTION public.import_kintai_rows(jsonb) TO authenticated;
 --         計算結果が 720 分を超える   … kintai_work_min_max_chk
 --       ※ この 3 つは本物の CHECK 制約ではなく、エラーの見分け用の名前
 --     ・時刻の形が不正・休憩が NULL かマイナスのときは計算せずに通し、
---       0-2. の CHECK 制約・NOT NULL のエラーに任せる
+--       0-2. の CHECK 制約・NOT NULL のエラーに任せる。
+--       このとき work_min が NULL（送られていない）なら 0 を入れる
+--       （NOT NULL は CHECK 制約より先に確かめられるため、0 を入れないと
+--         「work_min が NULL」（23502）が先に出て、休憩・時刻の CHECK 制約のエラーにならない）
 --     ・UPDATE は start_time / end_time / break_min / work_min を含むときだけ動く
 --       （slack_reported_at だけ・memo だけの更新では動かない）
 --     ・トリガー関数は PUBLIC・anon・authenticated から EXECUTE を外す
 --       （トリガーとして呼ばれるときは EXECUTE 権限を確かめない）
 --     既存環境への初回反映・確認・戻し方は
---     supabase/migrations/20261117_kintai_work_min_trigger.sql を参照
+--     supabase/migrations/20261117_kintai_work_min_trigger.sql と
+--     supabase/migrations/20261118_kintai_work_min_cleanup_1.sql（work_min が NULL なら 0 を入れる変更）を参照
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.kintai_compute_work_min()
 RETURNS trigger
@@ -497,6 +504,9 @@ BEGIN
      OR NEW.start_time !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
      OR NEW.end_time   !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
      OR NEW.break_min < 0 THEN
+    -- work_min が送られていなくても、NOT NULL（23502）より先に
+    -- 休憩・時刻の CHECK 制約（23514）のエラーが出るよう 0 を入れる
+    NEW.work_min := coalesce(NEW.work_min, 0);
     RETURN NEW;
   END IF;
 
