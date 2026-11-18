@@ -1271,13 +1271,9 @@
     const el = document.getElementById('add-work-display');
     if (!el) return;
     if (!s || !e) { el.textContent = '–'; return; }
-    const [sh, sm] = s.split(':').map(Number);
-    const [eh, em] = e.split(':').map(Number);
-    let diff = (eh * 60 + em) - (sh * 60 + sm);
-    if (diff < 0) diff += 24 * 60;
-    let total = diff - b;
-    if (total < 0) total = 0;
-    el.textContent = formatMin(total);
+    // 同じ時刻・0 分以下・12時間超えなど、保存できない組み合わせは「–」
+    const c = calcWorkMin(s, e, b);
+    el.textContent = c.error ? '–' : formatMin(c.workMin);
   }
 
   // ─── 入力チェック（共通） ─────────────────────────────────
@@ -1320,7 +1316,30 @@
 
   const toMinutes = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
 
+  // ─── 勤務時間の計算 ───────────────────────────────────────
+  // DB のトリガー kintai_compute_work_min（supabase_setup.sql 13.）と同じルール。
+  // 保存される work_min は DB が計算し直した値で、画面の計算は入力チェックと表示の目安に使う。
+  //   ・勤務時間 ＝ 退勤 − 出勤 − 休憩（分）。退勤が出勤より前なら翌日の退勤として +1440 分
+  //   ・error: 'same'（出勤と退勤が同じ時刻）/ 'nonpositive'（0 分以下）/ 'over'（720 分超え）
+  //            / 'invalid'（時刻が 'HH:MM' でない・休憩が数でない）/ null（問題なし）
+  //   span は 退勤 − 出勤（日またぎは +1440）
+  const WORK_MIN_MAX = 720;
+  function calcWorkMin(start, end, breakMin) {
+    const hhmm = /^\d{2}:\d{2}$/;
+    if (!hhmm.test(start || '') || !hhmm.test(end || '') || !Number.isFinite(breakMin)) {
+      return { workMin: NaN, span: NaN, error: 'invalid' };
+    }
+    let span = toMinutes(end) - toMinutes(start);
+    if (span < 0) span += 24 * 60;
+    if (span === 0) return { workMin: 0, span, error: 'same' };
+    const workMin = span - breakMin;
+    if (workMin <= 0)           return { workMin, span, error: 'nonpositive' };
+    if (workMin > WORK_MIN_MAX) return { workMin, span, error: 'over' };
+    return { workMin, span, error: null };
+  }
+
   // 勤怠1行分の入力チェック。OKなら保存用の値、NGなら null
+  //   退勤が出勤より前は日またぎ（翌日の退勤）として認める
   function validateRecordInputs(scope, f) {
     clearFieldErrors(scope);
     const errors = [];
@@ -1328,25 +1347,51 @@
     const breakRaw = f.breakMin.value.trim();
     const memo = f.memo.value.trimEnd();
 
-    if (!date)  errors.push({ el: f.date,  msg: '日付を入力してください' });
-    if (!start) errors.push({ el: f.start, msg: '出勤を入力してください' });
-    if (!end)   errors.push({ el: f.end,   msg: '退勤を入力してください' });
-    else if (start && toMinutes(end) <= toMinutes(start))
-      errors.push({ el: f.end, msg: '退勤は出勤より後にしてください' });
-
     const breakOk = /^\d+$/.test(breakRaw);
     const breakMin = breakOk ? parseInt(breakRaw, 10) : 0;
+    const calc = (start && end && breakOk) ? calcWorkMin(start, end, breakMin) : null;
+
+    if (!date)  errors.push({ el: f.date,  msg: '日付を入力してください' });
+    if (!start) errors.push({ el: f.start, msg: '出勤を入力してください' });
+    else if (calc?.error === 'invalid')
+      errors.push({ el: f.start, msg: '出勤・退勤の時刻を確認してください' });
+    if (!end)   errors.push({ el: f.end,   msg: '退勤を入力してください' });
+    else if (calc?.error === 'same')
+      errors.push({ el: f.end, msg: '出勤と退勤が同じ時刻です' });
+    else if (calc?.error === 'over')
+      errors.push({ el: f.end, msg: `勤務時間が12時間を超えています（休憩を除いて${calc.workMin}分）` });
+
     if (!breakRaw)     errors.push({ el: f.breakMin, msg: '休憩を入力してください' });
     else if (!breakOk) errors.push({ el: f.breakMin, msg: '0以上の整数で入力してください' });
-    else if (start && end && toMinutes(end) > toMinutes(start)) {
-      const span = toMinutes(end) - toMinutes(start);
-      if (breakMin >= span) errors.push({ el: f.breakMin, msg: `休憩は勤務時間（${span}分）未満にしてください` });
-    }
+    else if (calc?.error === 'nonpositive')
+      errors.push({ el: f.breakMin, msg: `休憩は勤務時間（${calc.span}分）未満にしてください` });
     if (!memo.trim()) errors.push({ el: f.memo, msg: '作業内容を入力してください' });
 
     if (showFieldErrors(errors)) return null;
-    const workMin = toMinutes(end) - toMinutes(start) - breakMin;
-    return { date, start, end, breakMin, workMin, memo };
+    // 保存される値は DB が計算し直す（同じルールなので通常は一致する）
+    return { date, start, end, breakMin, workMin: calc.workMin, memo };
+  }
+
+  // CHECK 制約・勤務時間のトリガーではじかれたとき（SQLSTATE 23514）の案内文。
+  // 制約名（トリガーはエラーの見分け用の名前）がメッセージに含まれるかで見分ける。
+  // 取り込み・追加・編集で共通に使う
+  const IMPORT_CHECK_MESSAGES = {
+    kintai_break_min_nonneg_chk:   '休憩の値を確認してください（0 以上の分数）',
+    kintai_work_min_nonneg_chk:    '実労働時間がマイナスになります。出勤・退勤・休憩の値を確認してください',
+    kintai_start_time_format_chk:  '出勤の時刻を確認してください（00:00〜23:59）',
+    kintai_end_time_format_chk:    '退勤の時刻を確認してください（00:00〜23:59）',
+    kintai_date_format_chk:        '日付を確認してください',
+    // 勤務時間のトリガー（supabase_setup.sql 13.）
+    kintai_work_min_same_time_chk: '出勤と退勤が同じ時刻です。出勤・退勤を確認してください',
+    kintai_work_min_positive_chk:  '休憩が勤務時間以上です。休憩の値を確認してください',
+    kintai_work_min_max_chk:       '勤務時間が12時間を超えています。出勤・退勤・休憩を確認してください',
+  };
+  // 23514 なら案内文、それ以外は null
+  function checkViolationMessage(error) {
+    if (error?.code !== '23514') return null;
+    const msg = error.message || '';
+    const name = Object.keys(IMPORT_CHECK_MESSAGES).find(k => msg.includes(k));
+    return name ? IMPORT_CHECK_MESSAGES[name] : '入力した値を確認してください';
   }
 
   // 同じ日付の自分の勤怠があるか（編集時は自分自身を除く）。DBで確認し、失敗時は読込済みデータで判定
@@ -1382,7 +1427,10 @@
       btn.disabled = false;
       btn.textContent = '保存';
       const isRLS = error.code === '42501' || (error.message || '').includes('row-level security');
-      showToast(isRLS ? 'RLSポリシーが原因で保存できません' : `保存失敗: ${error.message}`, true, isRLS ? 8000 : 4000);
+      const checkMsg = checkViolationMessage(error);
+      if (isRLS)         showToast('RLSポリシーが原因で保存できません', true, 8000);
+      else if (checkMsg) showToast(`保存できませんでした: ${checkMsg}`, true, 8000);
+      else               showToast(`保存失敗: ${error.message}`, true, 4000);
     } else {
       clearDraft('new');
       document.getElementById('add-record-row')?.remove();
@@ -1501,22 +1549,29 @@ ${escHtml(r.memo || '')}</textarea></td>
       return;
     }
     btn.textContent = '保存中...';
-    const { error } = await sb.from(TABLE).update({
+    // work_min は DB のトリガーが計算し直すので、保存後の値を返してもらって表示に使う
+    const { data, error } = await sb.from(TABLE).update({
       date, start_time: start || null, end_time: end || null,
       break_min: breakMin, work_min: workMin, memo
-    }).eq('id', id);
+    }).eq('id', id).select('work_min');
     btn.disabled = false;
     btn.textContent = '保存';
 
     if (error) {
-      showToast('更新失敗: ' + error.message, true);
+      const checkMsg = checkViolationMessage(error);
+      showToast(checkMsg ? `更新できませんでした: ${checkMsg}` : '更新失敗: ' + error.message, true, checkMsg ? 8000 : 4000);
+    } else if (!data || !data.length) {
+      // 別の画面で消された・見えなくなったなど、更新された行がない
+      showToast('更新対象が見つかりません。一覧を読み直します', true);
+      loadRecords();
     } else {
-      tr.querySelector('.work-time').textContent = formatMin(workMin);
+      const savedWorkMin = data[0].work_min;
+      tr.querySelector('.work-time').textContent = formatMin(savedWorkMin);
       const rec = records.find(r => String(r.id) === String(id));
       if (rec) {
         // DB のトリガーと同じく、memo が変わったら報告済みの印を消す
         if (rec.memo !== memo && rec.slack_reported_at) { rec.slack_reported_at = null; updateSlackMark(tr, rec); }
-        rec.date = date; rec.start_time = start || null; rec.end_time = end || null; rec.break_min = breakMin; rec.work_min = workMin; rec.memo = memo;
+        rec.date = date; rec.start_time = start || null; rec.end_time = end || null; rec.break_min = breakMin; rec.work_min = savedWorkMin; rec.memo = memo;
         updateSlackNote(tr, rec);   // 日付の変更・報告済みの解除で連絡事項欄の表示が変わる
       }
       clearDraft('edit', id);
@@ -2248,10 +2303,10 @@ ${escHtml(r.memo || '')}</textarea></td>
       const end      = document.querySelector(`.gcal-in-end[data-idx="${i}"]`).value   || row.end;
       const breakMin = parseInt(document.querySelector(`.gcal-in-break[data-idx="${i}"]`).value) || 0;
       const memo     = document.querySelector(`.gcal-in-memo[data-idx="${i}"]`).value;
-      const [sh, sm] = start.split(':').map(Number);
-      const [eh, em] = end.split(':').map(Number);
-      let workMin = (eh * 60 + em) - (sh * 60 + sm) - breakMin;
-      if (workMin < 0) workMin = 0;
+      // work_min は DB のトリガーが計算し直して上書きする（ここでは入力チェックをしない）。
+      // 計算できない・0 以下のときは 0 を送り、DB の CHECK 制約・トリガーのエラーに任せる
+      const calc     = calcWorkMin(start, end, breakMin);
+      const workMin  = Number.isFinite(calc.workMin) && calc.workMin > 0 ? calc.workMin : 0;
       // user_id は送らない（SQL 関数が auth.uid() を使う）
       return { date, start_time: start, end_time: end, break_min: breakMin, work_min: workMin, memo };
     });
@@ -2282,22 +2337,12 @@ ${escHtml(r.memo || '')}</textarea></td>
   }
 
   // 取り込みのエラーを画面に出す文にする。
-  // CHECK 制約（SQLSTATE 23514）ではじかれたときは、制約名から直す値を案内する
-  const IMPORT_CHECK_MESSAGES = {
-    kintai_break_min_nonneg_chk:  '休憩の値を確認してください（0 以上の分数）',
-    kintai_work_min_nonneg_chk:   '実労働時間がマイナスになります。出勤・退勤・休憩の値を確認してください',
-    kintai_start_time_format_chk: '出勤の時刻を確認してください（00:00〜23:59）',
-    kintai_end_time_format_chk:   '退勤の時刻を確認してください（00:00〜23:59）',
-    kintai_date_format_chk:       '日付を確認してください',
-  };
+  // CHECK 制約・勤務時間のトリガー（SQLSTATE 23514）ではじかれたときは、直す値を案内する
+  // （案内文は IMPORT_CHECK_MESSAGES。追加・編集と共通）
   function importErrorMessage(error) {
-    const msg = error?.message || '';
-    if (error?.code === '23514') {
-      const name = Object.keys(IMPORT_CHECK_MESSAGES).find(k => msg.includes(k));
-      return `取り込めませんでした: ${name ? IMPORT_CHECK_MESSAGES[name] : '入力した値を確認してください'}`
-           + '（勤怠は変更していません）';
-    }
-    return '取り込み失敗: ' + msg;
+    const checkMsg = checkViolationMessage(error);
+    if (checkMsg) return `取り込めませんでした: ${checkMsg}（勤怠は変更していません）`;
+    return '取り込み失敗: ' + (error?.message || '');
   }
 
   // ─── 追加明細行 ───────────────────────────────────────────

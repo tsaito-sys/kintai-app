@@ -24,12 +24,13 @@
 --    ・日またぎの勤務は end_time < start_time で記録し、
 --      work_min は「終了 − 開始 + 24時間 − 休憩」で計算した値が入っている
 --      （終了 < 開始は制約で止めない）
---    ・work_min は画面側で計算した値をそのまま保存している
+--    ・work_min は DB のトリガー（13.）が計算した値で上書きする
+--      （画面・取り込みから渡された値は使わない。同じ時刻・0 分以下・12時間超えはエラー）
 --    ・同じ user_id・同じ date の行が複数あり得る（1日に複数回の勤務。制約で止めない）
 --    ・外部キー user_id に ON DELETE の指定はない
 --      （勤怠の行が残っているユーザーは削除できない）
 --    ・RLS・ポリシー・列ごとの権限・トリガー・不要な権限の取り消しは
---      3. / 4. / 10. / 11. で設定する
+--      3. / 4. / 10. / 11. / 13. で設定する
 --    ・本番の定義を確かめる SQL: supabase/checks/schema_check.sql、
 --      supabase/checks/kintai_constraints_verify.sql
 -- ============================================================
@@ -405,7 +406,7 @@ REVOKE TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE public.profiles FROM aut
 --     途中で失敗したら消した分も含めて全部取り消す。
 --     ・SECURITY INVOKER（本人の権限で動く）。RLS・列ごとの権限（10.）・NOT NULL・CHECK（0-2.）がそのまま効く
 --     ・user_id は auth.uid() を使い、画面からは受け取らない
---     ・work_min は画面で計算した値をそのまま使う
+--     ・work_min は画面から受け取るが、DB のトリガー（13.）が計算した値で上書きする
 --     ・追加した行数を返す
 --     既存環境への初回反映・確認・戻し方は
 --     supabase/migrations/20261117_kintai_import_rpc.sql を参照
@@ -462,3 +463,74 @@ $$;
 
 REVOKE ALL ON FUNCTION public.import_kintai_rows(jsonb) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.import_kintai_rows(jsonb) TO authenticated;
+
+-- ============================================================
+-- 13. 勤務時間（work_min）を DB で計算するトリガー
+--     ・work_min ＝ 退勤 − 出勤 − 休憩（分）。退勤が出勤より前なら翌日の退勤として +1440 分
+--     ・画面・取り込みから渡された work_min は使わず、計算結果で上書きする
+--     ・エラー（コード 23514。メッセージの名前で画面が見分ける）:
+--         出勤と退勤が同じ時刻       … kintai_work_min_same_time_chk
+--         計算結果が 0 以下          … kintai_work_min_positive_chk
+--         計算結果が 720 分を超える   … kintai_work_min_max_chk
+--       ※ この 3 つは本物の CHECK 制約ではなく、エラーの見分け用の名前
+--     ・時刻の形が不正・休憩が NULL かマイナスのときは計算せずに通し、
+--       0-2. の CHECK 制約・NOT NULL のエラーに任せる
+--     ・UPDATE は start_time / end_time / break_min / work_min を含むときだけ動く
+--       （slack_reported_at だけ・memo だけの更新では動かない）
+--     ・トリガー関数は PUBLIC・anon・authenticated から EXECUTE を外す
+--       （トリガーとして呼ばれるときは EXECUTE 権限を確かめない）
+--     既存環境への初回反映・確認・戻し方は
+--     supabase/migrations/20261117_kintai_work_min_trigger.sql を参照
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.kintai_compute_work_min()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+DECLARE
+  v_span integer;  -- 退勤 − 出勤（分。日またぎは +1440）
+  v_work integer;  -- v_span − 休憩
+BEGIN
+  -- 形が不正・休憩が NULL かマイナスなら計算しない（今の CHECK 制約・NOT NULL のエラーに任せる）
+  IF NEW.start_time IS NULL OR NEW.end_time IS NULL OR NEW.break_min IS NULL
+     OR NEW.start_time !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+     OR NEW.end_time   !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+     OR NEW.break_min < 0 THEN
+    RETURN NEW;
+  END IF;
+
+  v_span := (substr(NEW.end_time,   1, 2)::int * 60 + substr(NEW.end_time,   4, 2)::int)
+          - (substr(NEW.start_time, 1, 2)::int * 60 + substr(NEW.start_time, 4, 2)::int);
+  IF v_span < 0 THEN
+    v_span := v_span + 1440;  -- 退勤が出勤より前 → 翌日の退勤
+  END IF;
+
+  IF v_span = 0 THEN
+    RAISE EXCEPTION '出勤と退勤が同じ時刻です（kintai_work_min_same_time_chk）'
+      USING ERRCODE = '23514', CONSTRAINT = 'kintai_work_min_same_time_chk';
+  END IF;
+
+  v_work := v_span - NEW.break_min;
+
+  IF v_work <= 0 THEN
+    RAISE EXCEPTION '休憩が勤務時間（%分）以上です（kintai_work_min_positive_chk）', v_span
+      USING ERRCODE = '23514', CONSTRAINT = 'kintai_work_min_positive_chk';
+  END IF;
+
+  IF v_work > 720 THEN
+    RAISE EXCEPTION '勤務時間が12時間を超えています（休憩を除いて%分）（kintai_work_min_max_chk）', v_work
+      USING ERRCODE = '23514', CONSTRAINT = 'kintai_work_min_max_chk';
+  END IF;
+
+  NEW.work_min := v_work;  -- 画面から渡された値は使わない
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.kintai_compute_work_min() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS kintai_compute_work_min ON public.kintai;
+CREATE TRIGGER kintai_compute_work_min
+  BEFORE INSERT OR UPDATE OF start_time, end_time, break_min, work_min ON public.kintai
+  FOR EACH ROW EXECUTE FUNCTION public.kintai_compute_work_min();
