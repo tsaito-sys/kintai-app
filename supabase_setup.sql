@@ -349,12 +349,18 @@ BEGIN;
 ALTER TABLE public.kintai ADD COLUMN IF NOT EXISTS slack_reported_at timestamptz;
 
 -- テーブル単位の INSERT / UPDATE を外し、アプリが使う列だけ付け直す
---   INSERT: 新規追加・カレンダー取り込みが使う 7 列
---   UPDATE: 編集が使う 6 列（user_id は含めない）
+--   INSERT: 新規追加・カレンダー取り込みが使う 6 列
+--   UPDATE: 編集が使う 5 列（user_id は含めない）
+--   ※ work_min は含めない。work_min は DB のトリガー（13.）が計算して入れるので、
+--     ログインユーザーは書き込めない（読むことはできる。SELECT はテーブル単位で付いている）。
+--     トリガーが NEW.work_min を書き換えるのは列権限と関係なく動く。
+--     既存環境で work_min を外した変更・確認・戻し方は
+--     supabase/migrations/20261118_kintai_work_min_cleanup_2.sql を参照
+--     （それより前は、work_min を含む INSERT 7 列・UPDATE 6 列だった）
 REVOKE INSERT, UPDATE ON public.kintai FROM anon, authenticated;
-GRANT INSERT (date, start_time, end_time, break_min, work_min, memo, user_id)
+GRANT INSERT (date, start_time, end_time, break_min, memo, user_id)
   ON public.kintai TO authenticated;
-GRANT UPDATE (date, start_time, end_time, break_min, work_min, memo)
+GRANT UPDATE (date, start_time, end_time, break_min, memo)
   ON public.kintai TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.kintai_reset_slack_reported()

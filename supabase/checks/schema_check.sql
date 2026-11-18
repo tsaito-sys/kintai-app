@@ -151,6 +151,9 @@ ORDER BY 1, 2, 3;
 --   2026-11-16 の結果: kintai の authenticated に
 --     INSERT 7 列（date, start_time, end_time, break_min, work_min, memo, user_id）
 --     UPDATE 6 列（date, start_time, end_time, break_min, work_min, memo）。profiles はなし
+--   2026-11-18（20261118_kintai_work_min_cleanup_2.sql）以降の期待値: kintai の authenticated に
+--     INSERT 6 列（date, start_time, end_time, break_min, memo, user_id）
+--     UPDATE 5 列（date, start_time, end_time, break_min, memo）。work_min はない。profiles はなし
 -- ============================================================
 SELECT c.relname AS table_name,
   CASE g.grantee WHEN 0 THEN 'PUBLIC' ELSE g.grantee::regrole::text END AS grantee,
@@ -166,9 +169,14 @@ ORDER BY 1, 2, 3, a.attnum;
 -- ============================================================
 -- ⑪ データの状態（件数の集計。結果は 1 行）
 --   date / start_time / end_time は text 型なので、形式が正しい値だけを時刻に変換する。
---   work_min_mismatch は「終了 > 開始」の行だけを数える（日またぎは end_before_start に出る）
+--   work_min_mismatch は今のルール（トリガー kintai_compute_work_min と同じ）で数える:
+--     退勤 − 出勤（マイナスなら翌日の退勤として +1440 分）− 休憩。
+--     日またぎ（end_before_start）も計算に含める。終了 = 開始の行は end_equals_start に出るので数えない
 --   2026-11-16 の結果: total_rows 142, dup_groups 1, dup_rows 2, end_before_start 4,
 --     ほかは 0。first_date 2026-01-22, last_date 2026-11-30
+--     （このときの work_min_mismatch は「終了 > 開始」の行だけを数える古い計算。
+--       日またぎの 4 行は今の計算でも一致するので、今の計算でも 0 になるはず）
+--   2026-11-18 以降の期待値: work_min_mismatch 0（日またぎは end_before_start に出るが、誤りではない）
 -- ============================================================
 WITH k AS (
   SELECT id, user_id, date, break_min, work_min,
@@ -195,9 +203,9 @@ SELECT
   (SELECT count(*) FROM k WHERE st IS NULL OR et IS NULL)         AS time_null_or_bad,
   (SELECT count(*) FROM k WHERE et < st)                          AS end_before_start,
   (SELECT count(*) FROM k WHERE et = st)                          AS end_equals_start,
-  (SELECT count(*) FROM k WHERE et > st
+  (SELECT count(*) FROM k WHERE et <> st
      AND work_min IS DISTINCT FROM
-         (extract(epoch FROM (et - st)) / 60)::int - coalesce(break_min, 0)) AS work_min_mismatch,
+         ((extract(epoch FROM (et - st)) / 60)::int + 1440) % 1440 - coalesce(break_min, 0)) AS work_min_mismatch,
   (SELECT count(*) FROM k WHERE work_min IS NULL)                 AS work_min_null,
   (SELECT count(*) FROM k WHERE break_min IS NULL)                AS break_min_null,
   (SELECT count(*) FROM k WHERE work_min < 0 OR break_min < 0)    AS negative_values,
@@ -229,9 +237,14 @@ LIMIT 200;
 
 -- ============================================================
 -- ⑬ 計算が合わない行・おかしな行の明細（最大 200 行）
---   expected_min は日またぎを考えていない（終了 < 開始の行は大きな負の数になる）
+--   expected_min は今のルール（トリガー kintai_compute_work_min と同じ）で計算する:
+--     退勤 − 出勤（マイナスなら翌日の退勤として +1440 分）− 休憩。
+--   日またぎ（終了 < 開始）だけの行は誤りではないので出さない（出た行の problem には「日またぎ」と添える）。
+--   「0 以下」「12時間超え」はトリガーが保存を止める条件（トリガーより前に入った行だけが出る）
 --   2026-11-16 の結果: 日またぎの 4 行（id 64, 66, 68, 70。2026-02〜03）のみ。
 --     work_min は「終了 − 開始 + 24時間 − 休憩」と一致しており、誤りではない
+--     （このときは日またぎを考えない古い計算で、終了 < 開始の行も出していた）
+--   2026-11-18 以降の期待値: 0 行
 -- ============================================================
 WITH k AS (
   SELECT id, user_id, date, start_time, end_time, break_min, work_min,
@@ -240,7 +253,7 @@ WITH k AS (
   FROM public.kintai
 ),
 c AS (
-  SELECT *, (extract(epoch FROM (et - st)) / 60)::int - coalesce(break_min, 0) AS expected_min
+  SELECT *, ((extract(epoch FROM (et - st)) / 60)::int + 1440) % 1440 - coalesce(break_min, 0) AS expected_min
   FROM k
 )
 SELECT p.name, c.user_id, c.date, c.id, c.start_time, c.end_time, c.break_min, c.work_min, c.expected_min,
@@ -248,9 +261,11 @@ SELECT p.name, c.user_id, c.date, c.id, c.start_time, c.end_time, c.break_min, c
     CASE WHEN c.user_id IS NULL THEN 'user_id NULL' END,
     CASE WHEN c.date IS NULL OR c.date !~ '^\d{4}-\d{2}-\d{2}$' THEN '日付の形式' END,
     CASE WHEN c.st IS NULL OR c.et IS NULL THEN '時刻 NULL/形式' END,
-    CASE WHEN c.et < c.st THEN '終了<開始' END,
+    CASE WHEN c.et < c.st THEN '日またぎ' END,
     CASE WHEN c.et = c.st THEN '終了=開始' END,
-    CASE WHEN c.et > c.st AND c.work_min IS DISTINCT FROM c.expected_min THEN 'work_min 不一致' END,
+    CASE WHEN c.et <> c.st AND c.work_min IS DISTINCT FROM c.expected_min THEN 'work_min 不一致' END,
+    CASE WHEN c.et <> c.st AND c.expected_min <= 0 THEN '0 以下' END,
+    CASE WHEN c.et <> c.st AND c.expected_min > 720 THEN '12時間超え' END,
     CASE WHEN c.work_min IS NULL THEN 'work_min NULL' END,
     CASE WHEN c.work_min < 0 OR c.break_min < 0 THEN '負の値' END
   ) AS problem
@@ -258,8 +273,9 @@ FROM c
 LEFT JOIN public.profiles p ON p.id = c.user_id
 WHERE c.user_id IS NULL
    OR c.date IS NULL OR c.date !~ '^\d{4}-\d{2}-\d{2}$'
-   OR c.st IS NULL OR c.et IS NULL OR c.et <= c.st
-   OR (c.et > c.st AND c.work_min IS DISTINCT FROM c.expected_min)
+   OR c.st IS NULL OR c.et IS NULL OR c.et = c.st
+   OR (c.et <> c.st AND (c.work_min IS DISTINCT FROM c.expected_min
+                         OR c.expected_min <= 0 OR c.expected_min > 720))
    OR c.work_min IS NULL OR c.work_min < 0 OR c.break_min < 0
 ORDER BY c.date, c.id
 LIMIT 200;

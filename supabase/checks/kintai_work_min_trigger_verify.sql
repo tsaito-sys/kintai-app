@@ -1,5 +1,7 @@
 -- ============================================================
 -- 20261117_kintai_work_min_trigger.sql の実行後の確認 SQL
+-- ※ 2026-11-18 の後片付け（20261118_kintai_work_min_cleanup_1.sql・_2.sql）以降は結果が変わる項目がある
+--   （W3 の関数の定義、W4 の work_min を指定する INSERT・UPDATE は権限エラー 42501 になる。今の確認は kintai_work_min_cleanup_2_verify.sql）
 --
 -- 使い方:
 --   Supabase Dashboard > SQL Editor に「1 ブロックずつ」貼って実行する。
