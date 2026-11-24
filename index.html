@@ -240,6 +240,30 @@
     .summary-card .label { font-size: 0.82rem; color: #4a5568; line-height: 1.3; margin-bottom: 2px; }
     .summary-card .value { font-size: 1.62rem; font-weight: 700; color: #2b6cb0; line-height: 1.2; } /* 日付input(0.9rem)の1.8倍 */
 
+    /* ─── 締めの状態の帯（本人の一覧・表示月がちょうど1か月で 2026年11月以降のとき） ─── */
+    .closing-bar {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+      padding: 10px 14px; margin-bottom: 16px;
+      background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+      font-size: 0.88rem; color: #2d3748;
+    }
+    .closing-title { font-weight: 700; white-space: nowrap; }
+    .closing-badge {
+      padding: 2px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; white-space: nowrap;
+      background: #e2e8f0; color: #4a5568;
+    }
+    .closing-badge.st-submitted { background: #fefcbf; color: #975a16; }
+    .closing-badge.st-approved  { background: #c6f6d5; color: #276749; }
+    .closing-badge.st-returned  { background: #fed7d7; color: #c53030; }
+    .closing-msg { color: #4a5568; }
+    .closing-bar .btn { padding: 6px 16px; margin-left: auto; }
+    .closing-bar .btn[hidden] { display: none; }
+    /* 締めた月（提出済・承認済）の行 */
+    .closed-note { margin-top: 6px; font-size: 0.72rem; color: #975a16; font-weight: 600; white-space: normal; }
+    .btn-save-row:disabled, .btn-delete:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-save-row:disabled:hover { background: #ebf8ff; }
+    .btn-delete:disabled:hover { background: #fff5f5; }
+
     #empty-msg {
       text-align: center;
       color: #a0aec0;
@@ -693,6 +717,14 @@
       <button class="btn btn-success" id="btn-csv" onclick="exportCSV()">CSVエクスポート</button>
     </div>
     </div><!-- /.list-toolbar -->
+
+    <!-- 締めの状態（本人のみ。表示月がちょうど1か月で 2026年11月以降のときだけ出す。renderClosingBar） -->
+    <div id="closing-bar" class="closing-bar" style="display:none">
+      <span class="closing-title" id="closing-title"></span>
+      <span class="closing-badge" id="closing-badge"></span>
+      <span class="closing-msg" id="closing-msg"></span>
+      <button type="button" class="btn btn-primary" id="closing-submit-btn" onclick="submitClosing()" hidden>締める（提出）</button>
+    </div>
 
     <!-- テーブル -->
     <div class="table-wrap">
@@ -1188,6 +1220,8 @@
       const id  = tr.dataset.id;
       const rec = data.find(r => String(r.id) === String(id));
       if (!rec) return;
+      // 締めた月の行は入力できないので、下書きを戻さない（下書きは消さずに残し、差し戻し後に戻す）
+      if (tr.dataset.locked) return;
       tr.addEventListener('input', () => saveEditDraft(tr, id));
 
       const d = loadDraft('edit', id);
@@ -1394,6 +1428,37 @@
     return name ? IMPORT_CHECK_MESSAGES[name] : '入力した値を確認してください';
   }
 
+  // 月の締め（supabase_setup.sql 14.）のエラーの案内文。
+  // DB のメッセージの括弧内の名前で見分ける（コードは 55000・22023・42501 が混ざるので名前だけで見る）
+  const CLOSING_MESSAGES = {
+    kintai_month_closed:           'この月は締め（提出済・承認済）のため、追加・編集・削除できません。直す場合は管理者に差し戻しを依頼してください',
+    kintai_closing_month_invalid:  'この月は締めの対象ではありません（2026年11月分から）',
+    kintai_closing_too_early:      'この月はまだ締められません。翌月1日から締められます',
+    kintai_closing_already:        'この月はすでに提出済または承認済です',
+    kintai_closing_no_rows:        '勤怠がない月は締められません',
+    kintai_closing_empty_memo:     '作業内容が空の行があるため締められません',
+    kintai_closing_bad_status:     '今の状態ではこの操作はできません',
+    kintai_closing_no_rate:        '単価が登録されていないため承認できません',
+    kintai_closing_admin_only:     '管理者だけが操作できます',
+    kintai_closing_self_operation: '自分の締めは承認・差し戻しできません',
+  };
+  // 締めのエラーなら { name, text }、それ以外は null
+  function closingError(error) {
+    const msg = error?.message || '';
+    const name = Object.keys(CLOSING_MESSAGES).find(k => msg.includes(k));
+    if (!name) return null;
+    let text = CLOSING_MESSAGES[name];
+    if (name === 'kintai_closing_empty_memo') {
+      const n = /(\d+)件/.exec(msg)?.[1];   // DB のメッセージ「作業内容が空の勤怠が N件 …」
+      if (n) text = `作業内容が空の行が${n}行あるため締められません`;
+    }
+    return { name, text };
+  }
+  // 追加・編集・削除・取り込みで共通: 締めのエラー → CHECK 制約のエラー の順に案内文を探す（なければ null）
+  function dbErrorMessage(error) {
+    return closingError(error)?.text ?? checkViolationMessage(error);
+  }
+
   // 同じ日付の自分の勤怠があるか（編集時は自分自身を除く）。DBで確認し、失敗時は読込済みデータで判定
   async function hasSameDateRecord(date, excludeId) {
     const others = rows => rows.some(r => String(r.id) !== String(excludeId));
@@ -1427,10 +1492,11 @@
     if (error) {
       btn.disabled = false;
       btn.textContent = '保存';
+      // 締めた月・CHECK 制約の案内文を先に見る（42501 を RLS と取り違えないため）
+      const checkMsg = dbErrorMessage(error);
       const isRLS = error.code === '42501' || (error.message || '').includes('row-level security');
-      const checkMsg = checkViolationMessage(error);
-      if (isRLS)         showToast('RLSポリシーが原因で保存できません', true, 8000);
-      else if (checkMsg) showToast(`保存できませんでした: ${checkMsg}`, true, 8000);
+      if (checkMsg)      showToast(`保存できませんでした: ${checkMsg}`, true, 8000);
+      else if (isRLS)    showToast('RLSポリシーが原因で保存できません', true, 8000);
       else               showToast(`保存失敗: ${error.message}`, true, 4000);
     } else {
       clearDraft('new');
@@ -1456,7 +1522,13 @@
     const to   = document.getElementById('filter-to').value;
     syncFilterMonth();
 
-    let query = sb.from(TABLE).select('*').order('date', { ascending: true });
+    // 並び順は 日付 → 開始時刻 → id（同じ日に複数行あるとき、DB の返す順に任せない）。
+    // date・start_time は 'YYYY-MM-DD'・'HH:MM' の文字列なので、文字列の順で日時の順になる。
+    // CSV 出力もこの順（records をそのまま使う）
+    let query = sb.from(TABLE).select('*')
+      .order('date', { ascending: true })
+      .order('start_time', { ascending: true })
+      .order('id', { ascending: true });
     query = query.gte('date', from).lte('date', to);
 
     // 管理者: 選択ユーザーで絞り込み
@@ -1465,14 +1537,17 @@
       if (selectedUserId) query = query.eq('user_id', selectedUserId);
     }
 
-    const { data, error } = await query;
+    // 本人: 表示期間に含まれる月の締めも一緒に読む
+    const [{ data, error }, closingRes] = await Promise.all([query, fetchClosings(from, to)]);
     if (seq !== loadRecordsSeq) return; // もっと新しい取得が始まっている
     if (error) { showToast('取得失敗: ' + error.message, true); return; }
 
     records = data || [];
+    applyClosings(closingRes, from, to);
 
     renderTable(records);
     renderSummary(records);
+    renderClosingBar();
   }
 
   function renderTable(data) {
@@ -1507,23 +1582,29 @@
         </tr>
       `).join('');
     } else {
-      tbody.innerHTML = data.map(r => `
-        <tr data-id="${r.id}">
-          <td><input type="date" class="r-date" value="${r.date}" style="${inp};width:150px"></td>
-          <td><input type="time" class="r-start" value="${r.start_time || ''}" style="${inp};width:100px"></td>
-          <td><input type="time" class="r-end" value="${r.end_time || ''}" style="${inp};width:100px"></td>
-          <td style="white-space:nowrap"><input type="number" class="r-break" value="${r.break_min ?? 0}" min="0" max="480" style="${inp};width:52px"> 分</td>
+      // 締めた月（提出済・承認済）の行は、入力欄・保存・削除を無効にする（Slack 報告は使える）
+      tbody.innerHTML = data.map(r => {
+        const locked = isClosedDate(r.date);
+        const dis = locked ? ' disabled' : '';
+        const lockTitle = locked ? ' title="締めた月のため変更できません"' : '';
+        return `
+        <tr data-id="${r.id}"${locked ? ' data-locked="1"' : ''}>
+          <td><input type="date" class="r-date" value="${r.date}" style="${inp};width:150px"${dis}></td>
+          <td><input type="time" class="r-start" value="${r.start_time || ''}" style="${inp};width:100px"${dis}></td>
+          <td><input type="time" class="r-end" value="${r.end_time || ''}" style="${inp};width:100px"${dis}></td>
+          <td style="white-space:nowrap"><input type="number" class="r-break" value="${r.break_min ?? 0}" min="0" max="480" style="${inp};width:52px"${dis}> 分</td>
           <td class="work-time">${formatMin(r.work_min)}</td>
-          <td><textarea class="r-memo memo-textarea" rows="5" style="${inp};resize:vertical">
+          <td><textarea class="r-memo memo-textarea" rows="5" style="${inp};resize:vertical"${dis}>
 ${escHtml(r.memo || '')}</textarea></td>
           <td style="white-space:nowrap">
-            <button class="btn-save-row" onclick="updateRecord('${r.id}', this)">保存</button>
-            <button class="btn-delete" onclick="deleteRecord('${r.id}')">削除</button>
+            <button class="btn-save-row" onclick="updateRecord('${r.id}', this)"${dis}${lockTitle}>保存</button>
+            <button class="btn-delete" onclick="deleteRecord('${r.id}')"${dis}${lockTitle}>削除</button>
             <div class="slack-row"><button class="btn-slack-row" onclick="reportToSlack('${r.id}', this)">Slackに報告</button></div>
             <div class="slack-mark">${slackMarkText(r)}</div>
+            ${locked ? '<div class="closed-note">締めた月のため変更できません</div>' : ''}
           </td>
-        </tr>
-      `).join('');
+        </tr>`;
+      }).join('');
       tbody.querySelectorAll('tr[data-id]').forEach(tr => {
         const rec = data.find(r => String(r.id) === String(tr.dataset.id));
         if (rec) updateSlackNote(tr, rec);
@@ -1560,7 +1641,7 @@ ${escHtml(r.memo || '')}</textarea></td>
     btn.textContent = '保存';
 
     if (error) {
-      const checkMsg = checkViolationMessage(error);
+      const checkMsg = dbErrorMessage(error);
       showToast(checkMsg ? `更新できませんでした: ${checkMsg}` : '更新失敗: ' + error.message, true, checkMsg ? 8000 : 4000);
     } else if (!data || !data.length) {
       // 別の画面で消された・見えなくなったなど、更新された行がない
@@ -1578,21 +1659,167 @@ ${escHtml(r.memo || '')}</textarea></td>
       }
       clearDraft('edit', id);
       renderSummary(records);
+      renderClosingBar();   // 作業内容を埋めた・空にしたで、提出できるかが変わる
       showToast('更新しました');
     }
   }
 
   // 集計は本人・管理者とも、データがない月も表示する（絞り込み欄の位置を変えないため）
   // 管理者は選択中のユーザーの集計になる
+  // 出勤日数は日付の重複を除いて数える（1日に複数回の勤務は1日。締めの勤務日数と同じ数え方）
   function renderSummary(data) {
     const card = document.getElementById('summary-card');
     const totalMin = data.reduce((s, r) => s + (r.work_min || 0), 0);
-    const days = data.length;
+    const days = new Set(data.map(r => r.date)).size;
 
     document.getElementById('sum-days').textContent  = days + ' 日';
     document.getElementById('sum-hours').textContent = days ? (totalMin / 60).toFixed(2) + ' h' : '0 h';
     document.getElementById('sum-avg').textContent   = days ? (Math.round(totalMin / days) / 60).toFixed(2) + ' h' : '— h';
     card.style.display = '';
+  }
+
+  // ─── 月の締め（本人） ──────────────────────────────────────
+  // DB: kintai_closing（RLS で本人の行だけ読める）と rpc submit_kintai_closing（supabase_setup.sql 14.）。
+  //     締めのルールの判定は DB が行い、画面は先に分かる理由を出すだけ。
+  //     提出後に本人は取り消せない（取り下げは 2026-11-19 になくした）。直すときは管理者の差し戻し
+  const CLOSING_FIRST_MONTH = '2026-11';            // 締めの対象は 2026年11月分から
+  // 作業内容が「空」: DB（kintai_closing_submit）と同じ文字だけでできている
+  // （JavaScript の \s は DB より広いので使わない）
+  const BLANK_MEMO_RE = /^[ \t\n\r\v\f　 ]*$/;
+
+  let closingByMonth   = new Map();  // 'YYYY-MM' → { month, status, submitted_at, approved_at, returned_at }
+  let closingLoadError = false;      // 締めの読み込みに失敗した（表示だけの問題。変更は DB が止める）
+  let closingMonth     = null;       // 帯を出す月 { y, m }（表示月がちょうど1か月で対象の月のときだけ）
+  let closingBusy      = false;      // 提出の処理中
+
+  const ymKey = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
+
+  // 表示期間に含まれる月の締めを読む（本人のみ。管理者・対象外の期間は null）
+  async function fetchClosings(from, to) {
+    if (currentRole === 'admin' || !currentUser || !from || !to) return null;
+    const fromMonth = from.slice(0, 7), toMonth = to.slice(0, 7);
+    if (toMonth < CLOSING_FIRST_MONTH) return { data: [], error: null };
+    try {
+      return await sb.from('kintai_closing')
+        .select('month, status, submitted_at, approved_at, returned_at')
+        .eq('user_id', currentUser.id)
+        .gte('month', fromMonth + '-01')
+        .lte('month', toMonth + '-01');
+    } catch (e) {
+      return { data: null, error: e };
+    }
+  }
+
+  function applyClosings(res, from, to) {
+    closingByMonth = new Map();
+    closingLoadError = false;
+    closingMonth = null;
+    if (currentRole === 'admin' || !res) return;
+    if (res.error) {
+      closingLoadError = true;
+      console.error('[Closing] load error:', res.error.message || res.error);
+    } else {
+      (res.data || []).forEach(c => closingByMonth.set(String(c.month).slice(0, 7), c));
+    }
+    const wm = wholeMonthOf(from, to);
+    if (wm && ymKey(wm.y, wm.m) >= CLOSING_FIRST_MONTH) closingMonth = wm;
+  }
+
+  // その日付の月が締め（提出済・承認済）か（本人の一覧の行を無効にするかどうか）
+  function isClosedDate(ymd) {
+    const c = closingByMonth.get(String(ymd || '').slice(0, 7));
+    return !!c && (c.status === 'submitted' || c.status === 'approved');
+  }
+
+  // 提出できない理由（押す前に画面で分かるもの）。提出できるなら null
+  // 月が終わっていなくても、作業内容が空の行・勤怠がないことは先に知らせる（理由を「。」でつなぐ）
+  function closingSubmitBlockReason(y, m) {
+    const reasons = [];
+    const next = new Date(y, m, 1);   // 翌月1日
+    const ny = next.getFullYear(), nm = next.getMonth() + 1;
+    if (todayJstStr() < `${ymKey(ny, nm)}-01`) {
+      reasons.push(ny !== y ? `${ny}年${nm}月1日から締められます` : `${nm}月1日から締められます`);
+    }
+    const rows = records.filter(r => String(r.date).startsWith(ymKey(y, m) + '-'));
+    const blank = rows.filter(r => BLANK_MEMO_RE.test(r.memo ?? '')).length;
+    if (!rows.length) reasons.push('勤怠がない月は締められません');
+    else if (blank)   reasons.push(`作業内容が空の行が${blank}行あります。入力してから締めてください`);
+    return reasons.length ? reasons.join('。') : null;
+  }
+
+  function renderClosingBar() {
+    const bar = document.getElementById('closing-bar');
+    if (currentRole === 'admin' || !closingMonth) { bar.style.display = 'none'; return; }
+
+    const { y, m } = closingMonth;
+    const c = closingByMonth.get(ymKey(y, m));
+    // 取り下げ済（2026-11-19 より前のデータだけ）は未提出と同じ
+    const status = c?.status === 'withdrawn' ? null : (c?.status ?? null);
+    const badge = document.getElementById('closing-badge');
+    const msgEl = document.getElementById('closing-msg');
+    const subBtn = document.getElementById('closing-submit-btn');
+
+    document.getElementById('closing-title').textContent = `${y}年${m}月分の締め`;
+    badge.className = 'closing-badge' + (status ? ' st-' + status : '');
+    subBtn.hidden = true;
+    subBtn.disabled = closingBusy;
+
+    if (closingLoadError) {
+      badge.textContent = '—';
+      msgEl.textContent = '締めの状態を読み込めませんでした。画面を読み直してください';
+    } else if (status === 'submitted') {
+      badge.textContent = '提出済（承認待ち）';
+      msgEl.textContent = `提出 ${formatReportedAt(c.submitted_at)}。直す場合は管理者に差し戻しを依頼してください`;
+    } else if (status === 'approved') {
+      badge.textContent = '承認済';
+      msgEl.textContent = `承認 ${formatReportedAt(c.approved_at)}。直す場合は管理者に差し戻しを依頼してください`;
+    } else {
+      const returned = status === 'returned';
+      badge.textContent = returned ? '差し戻し' : '未提出';
+      const reason = closingSubmitBlockReason(y, m);
+      const head = returned ? '差し戻されました。直してから再提出してください。' : '';
+      msgEl.textContent = head + (reason ?? '締めると、この月の勤怠は追加・編集・削除できなくなります');
+      subBtn.hidden = false;
+      if (reason) subBtn.disabled = true;
+    }
+    bar.style.display = '';
+  }
+
+  async function submitClosing() {
+    if (!sb || !closingMonth || closingBusy) return;
+    const { y, m } = closingMonth;
+    const reason = closingSubmitBlockReason(y, m);
+    if (reason) { showToast(reason, true, 5000); return; }
+    // 保存していない変更がある行は、締めると直せなくなるので先に止める
+    const unsaved = records.filter(r => String(r.date).startsWith(ymKey(y, m) + '-') && loadDraft('edit', r.id)).length;
+    if (unsaved) {
+      showToast(`保存していない変更がある行が${unsaved}行あります。保存するか元に戻してから締めてください`, true, 6000);
+      return;
+    }
+    if (!confirm(`${y}年${m}月分を提出します。\n提出後は、この月の勤怠を追加・編集・削除できません。自分では取り消せません（直す場合は管理者に差し戻しを依頼してください）。\nよろしいですか？`)) return;
+    await runClosingRpc('submit_kintai_closing', `${y}年${m}月分を提出しました`);
+  }
+
+  // 締めの rpc（今は提出だけ）を呼ぶ。成否にかかわらず、終わったら一覧と帯を読み直す
+  // （別の画面で状態が変わっていた場合も、読み直して今の状態を出す）
+  async function runClosingRpc(fn, okMsg) {
+    const { y, m } = closingMonth;
+    closingBusy = true;
+    renderClosingBar();
+    try {
+      const { error } = await sb.rpc(fn, { p_month: `${ymKey(y, m)}-01` });
+      if (error) {
+        const ce = closingError(error);
+        showToast(ce ? ce.text : '締めの操作に失敗しました: ' + error.message, true, 8000);
+      } else {
+        showToast(okMsg);
+      }
+    } catch (e) {
+      showToast('締めの操作に失敗しました: ' + (e?.message || e), true);
+    } finally {
+      closingBusy = false;
+      loadRecords();
+    }
   }
 
   // ─── Slack 作業報告 ───────────────────────────────────────
@@ -1672,7 +1899,8 @@ ${escHtml(r.memo || '')}</textarea></td>
     const tr = btn.closest('tr');
 
     // 未保存の変更（下書き）があれば止める。送るのは保存済みの作業内容
-    if (loadDraft('edit', id)) {
+    // （締めた月の行は保存できず下書きも画面に出していないので、下書きがあっても止めない）
+    if (!isClosedDate(rec.date) && loadDraft('edit', id)) {
       showToast('この行に未保存の変更があります。先に「保存」してから報告してください', true, 5000);
       tr.querySelector('.btn-save-row')?.focus();
       return;
@@ -1746,7 +1974,11 @@ ${escHtml(r.memo || '')}</textarea></td>
   async function deleteRecord(id) {
     if (!confirm('この記録を削除しますか？')) return;
     const { error } = await sb.from(TABLE).delete().eq('id', id);
-    if (error) { showToast('削除失敗: ' + error.message, true); return; }
+    if (error) {
+      const checkMsg = dbErrorMessage(error);
+      showToast(checkMsg ? `削除できませんでした: ${checkMsg}` : '削除失敗: ' + error.message, true, checkMsg ? 8000 : 4000);
+      return;
+    }
     clearDraft('edit', id);
     clearDraft('note', id);
     showToast('削除しました');
@@ -2339,10 +2571,10 @@ ${escHtml(r.memo || '')}</textarea></td>
   }
 
   // 取り込みのエラーを画面に出す文にする。
-  // CHECK 制約・勤務時間のトリガー（SQLSTATE 23514）ではじかれたときは、直す値を案内する
-  // （案内文は IMPORT_CHECK_MESSAGES。追加・編集と共通）
+  // 締めた月の日付が入っている・CHECK 制約・勤務時間のトリガー（SQLSTATE 23514）ではじかれたときは、
+  // 案内文を出す（案内文は CLOSING_MESSAGES・IMPORT_CHECK_MESSAGES。追加・編集・削除と共通）
   function importErrorMessage(error) {
-    const checkMsg = checkViolationMessage(error);
+    const checkMsg = dbErrorMessage(error);
     if (checkMsg) return `取り込めませんでした: ${checkMsg}（勤怠は変更していません）`;
     return '取り込み失敗: ' + (error?.message || '');
   }

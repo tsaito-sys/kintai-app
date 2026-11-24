@@ -552,7 +552,7 @@ CREATE TRIGGER kintai_compute_work_min
   FOR EACH ROW EXECUTE FUNCTION public.kintai_compute_work_min();
 
 -- ============================================================
--- 14. 月の締め（本人が提出 → 管理者が承認・差し戻し。承認前は本人が取り下げ）
+-- 14. 月の締め（本人が提出 → 管理者が承認・差し戻し。提出後に直すときは管理者の差し戻しだけ）
 --     ・1人×暦月で1件（kintai_closing）。対象は 2026年11月分から。締められるのは日本時間で翌月1日以降
 --     ・勤怠が0件の月・作業内容が空（空白だけを含む）の行がある月は締められない。勤務日数は日付の重複を除く
 --     ・承認時に集計を計算し直し、単価（profiles.inv_rate。NULL・0以下はエラー）と
@@ -560,14 +560,17 @@ CREATE TRIGGER kintai_compute_work_min
 --     ・管理者は自分の締めを承認・差し戻しできない。承認後の差し戻しも管理者だけ
 --     ・提出済・承認済の月は、その人の kintai を追加・編集・削除できない（トリガー kintai_block_closed_month。
 --       取り込み・SQL Editor も含む。Slack 報告の印だけの更新は通す。日付を変える編集は前後両方の月を確かめる）
---     ・提出・取り下げ・承認・差し戻しとトリガーは、user_id と月の advisory lock で同時実行をそろえる
+--     ・本人による取り下げは 2026-11-19 になくした（取り下げの関数 2 つは下の 4. で消す）。
+--       状態 withdrawn・履歴の withdraw・列 withdrawn_at は、それより前のデータのために残す
+--     ・提出・承認・差し戻しとトリガーは、user_id と月の advisory lock で同時実行をそろえる
 --     ・履歴は kintai_closing_log（authenticated からは見えない。SQL Editor で見る）
 --     ・処理の本体は private の関数（あとで別システムからも使えるよう、操作する人・今日を引数で受け取る）。
---       画面は public の submit / withdraw / approve / return_kintai_closing を rpc で呼ぶ
+--       画面は public の submit / approve / return_kintai_closing を rpc で呼ぶ
 --     ・新しいテーブル・自動採番・関数から PUBLIC・anon の権限を外す（service_role は Supabase の既定のまま）
 --     ・トリガーは名前の順で動くため、kintai_compute_work_min（13.）より先に締めを確かめる
 --     既存環境への初回反映・確認・戻し方は
---     supabase/migrations/20261119_kintai_closing.sql を参照
+--     supabase/migrations/20261119_kintai_closing.sql と
+--     supabase/migrations/20261119_kintai_closing_no_withdraw.sql（取り下げをなくす）を参照
 --     （エラーの名前の一覧も移行 SQL の冒頭にある）
 -- ============================================================
 BEGIN;
@@ -579,7 +582,7 @@ CREATE TABLE IF NOT EXISTS public.kintai_closing (
   id             bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
   user_id        uuid NOT NULL,                -- 本人
   month          date NOT NULL,                -- その月の1日
-  status         text NOT NULL,                -- submitted / approved / returned / withdrawn
+  status         text NOT NULL,                -- submitted / approved / returned / withdrawn（withdrawn は 2026-11-19 より前の取り下げだけ）
   work_days      integer NOT NULL,             -- 勤務日数（日付の重複を除く）。提出時に入れ、承認時に計算し直す
   total_work_min integer NOT NULL,             -- work_min の合計（分）
   row_count      integer NOT NULL,             -- 行数（参考）
@@ -590,7 +593,7 @@ CREATE TABLE IF NOT EXISTS public.kintai_closing (
   amount         bigint,                       -- 承認時の金額 = total_work_min × rate ÷ 60 の切り捨て
   returned_at    timestamptz,                  -- 差し戻しの日時
   returned_by    uuid,                         -- 差し戻した人
-  withdrawn_at   timestamptz,                  -- 取り下げの日時
+  withdrawn_at   timestamptz,                  -- 取り下げの日時（2026-11-19 に取り下げをなくした。以降は入らない）
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT kintai_closing_pkey           PRIMARY KEY (id),
@@ -632,7 +635,7 @@ CREATE TABLE IF NOT EXISTS public.kintai_closing_log (
   closing_id     bigint NOT NULL,
   user_id        uuid NOT NULL,
   month          date NOT NULL,
-  action         text NOT NULL,                -- submit / withdraw / approve / return
+  action         text NOT NULL,                -- submit / withdraw / approve / return（withdraw は 2026-11-19 より前だけ）
   from_status    text,                         -- 変わる前（初回の提出は NULL）
   to_status      text NOT NULL,                -- 変わった後
   actor          uuid,                         -- 操作した人（別システムからの操作に備え、NULL 可・参照なし）
@@ -801,7 +804,8 @@ BEGIN
     VALUES (p_user_id, p_month, 'submitted', v_days, v_min, v_rows, now())
     RETURNING * INTO v_row;
   ELSE
-    -- 差し戻し・取り下げの後の再提出。前回の承認・差し戻し・取り下げの値は消す（経緯は履歴に残る）
+    -- 差し戻しの後の再提出（2026-11-19 より前に取り下げた行も同じ）。
+    -- 前回の承認・差し戻し・取り下げの値は消す（経緯は履歴に残る）
     UPDATE public.kintai_closing c
        SET status = 'submitted', work_days = v_days, total_work_min = v_min, row_count = v_rows,
            submitted_at = now(),
@@ -815,49 +819,6 @@ BEGIN
   INSERT INTO public.kintai_closing_log (
     closing_id, user_id, month, action, from_status, to_status, actor, work_days, total_work_min)
   VALUES (v_row.id, p_user_id, p_month, 'submit', v_prev, 'submitted', p_actor, v_days, v_min);
-
-  RETURN v_row;
-END;
-$$;
-
--- 取り下げ（提出済のときだけ）
-CREATE OR REPLACE FUNCTION private.kintai_closing_withdraw(
-  p_user_id uuid, p_month date, p_actor uuid)
-RETURNS public.kintai_closing
-LANGUAGE plpgsql
-VOLATILE
-SECURITY DEFINER
-SET search_path = ''
-AS $$
-DECLARE
-  v_row  public.kintai_closing;
-BEGIN
-  IF p_user_id IS NULL OR p_month IS NULL THEN
-    RAISE EXCEPTION 'ユーザーと月を指定してください（kintai_closing_month_invalid）'
-      USING ERRCODE = '22023';
-  END IF;
-
-  PERFORM pg_advisory_xact_lock(private.kintai_closing_lock_key(p_user_id, p_month));
-
-  SELECT * INTO v_row
-  FROM public.kintai_closing c
-  WHERE c.user_id = p_user_id AND c.month = p_month
-  FOR UPDATE;
-
-  IF v_row.id IS NULL OR v_row.status <> 'submitted' THEN
-    RAISE EXCEPTION '取り下げできるのは提出済（承認前）の締めだけです（kintai_closing_bad_status）'
-      USING ERRCODE = '55000';
-  END IF;
-
-  UPDATE public.kintai_closing c
-     SET status = 'withdrawn', withdrawn_at = now(), updated_at = now()
-   WHERE c.id = v_row.id
-  RETURNING * INTO v_row;
-
-  INSERT INTO public.kintai_closing_log (
-    closing_id, user_id, month, action, from_status, to_status, actor, work_days, total_work_min)
-  VALUES (v_row.id, p_user_id, p_month, 'withdraw', 'submitted', 'withdrawn', p_actor,
-          v_row.work_days, v_row.total_work_min);
 
   RETURN v_row;
 END;
@@ -994,7 +955,6 @@ REVOKE ALL ON FUNCTION private.kintai_closing_lock_key(uuid, date)            FR
 REVOKE ALL ON FUNCTION private.kintai_month_is_closed(uuid, text)             FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION private.kintai_assert_month_open(uuid, text)           FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION private.kintai_closing_submit(uuid, date, uuid, date)  FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION private.kintai_closing_withdraw(uuid, date, uuid)      FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION private.kintai_closing_approve(uuid, date, uuid)       FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION private.kintai_closing_return(uuid, date, uuid)        FROM PUBLIC, anon, authenticated;
 
@@ -1018,24 +978,6 @@ BEGIN
     RAISE EXCEPTION 'ログインしていません。再ログインしてください' USING ERRCODE = '42501';
   END IF;
   RETURN private.kintai_closing_submit(v_uid, p_month, v_uid, (now() AT TIME ZONE 'Asia/Tokyo')::date);
-END;
-$$;
-
--- 取り下げ（本人）
-CREATE OR REPLACE FUNCTION public.withdraw_kintai_closing(p_month date)
-RETURNS public.kintai_closing
-LANGUAGE plpgsql
-VOLATILE
-SECURITY DEFINER
-SET search_path = ''
-AS $$
-DECLARE
-  v_uid uuid := auth.uid();
-BEGIN
-  IF v_uid IS NULL THEN
-    RAISE EXCEPTION 'ログインしていません。再ログインしてください' USING ERRCODE = '42501';
-  END IF;
-  RETURN private.kintai_closing_withdraw(v_uid, p_month, v_uid);
 END;
 $$;
 
@@ -1082,13 +1024,15 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.submit_kintai_closing(date)          FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION public.withdraw_kintai_closing(date)        FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.approve_kintai_closing(uuid, date)   FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.return_kintai_closing(uuid, date)    FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.submit_kintai_closing(date)        TO authenticated;
-GRANT EXECUTE ON FUNCTION public.withdraw_kintai_closing(date)      TO authenticated;
 GRANT EXECUTE ON FUNCTION public.approve_kintai_closing(uuid, date) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.return_kintai_closing(uuid, date)  TO authenticated;
+
+-- 取り下げ（2026-11-19 になくした）。前に作った環境では、ここで消す（画面から呼ぶ関数 → 本体の順）
+DROP FUNCTION IF EXISTS public.withdraw_kintai_closing(date);
+DROP FUNCTION IF EXISTS private.kintai_closing_withdraw(uuid, date, uuid);
 
 
 -- ------------------------------------------------------------

@@ -1,6 +1,11 @@
 -- ============================================================
 -- 20261119_kintai_closing.sql の実行後の確認 SQL
 --
+-- ※ 2026-11-19 に本人による取り下げをなくした（20261119_kintai_closing_no_withdraw.sql）。
+--   この確認 SQL も取り下げのない仕様に直した（取り下げの関数がないことは S1、
+--   提出後に本人が直せず、管理者の差し戻しで直せることは S6 で確かめる）。
+--   20261119_kintai_closing_no_withdraw.sql を実行する前に流すと、S1・S6 などが NG になる。
+--
 -- ※ S4 は「2026年11月中に実行する」前提の項目がある（本物の11月分がまだ締められないことの確認）。
 --   2026年12月1日（日本時間）以降に実行すると、S4 の「2026年11月分」の結果は too_early ではなくなる
 --   （本人の11月の勤怠の内容によって、no_rows・empty_memo・already になったり、提出が通ったりする。
@@ -35,19 +40,22 @@
 --   （RLS・権限が画面と同じに効く）。ブロックを取り消すと postgres に戻る
 --
 -- 結果の見方:
---   submitted / approved / returned / withdrawn … 締めの状態
+--   submitted / approved / returned … 締めの状態
 --   数字                 … 件数・勤務時間（分）など
 --   55000:名前 など       … エラーで止まった（名前はメッセージの括弧内。画面が見分けに使う）
+--   42883:* / 42501:*    … エラーの番号だけを比べる項目（関数がない・権限がない。
+--                          PostgreSQL が出す文言は環境で形が変わるため）
 --   true / false         … 定義・権限の確認
 --
 -- 確認する項目:
---   S1  定義・権限（テーブル・RLS・制約・ポリシー・権限・関数・トリガー）
+--   S1  定義・権限（テーブル・RLS・制約・ポリシー・権限・関数・トリガー。取り下げの関数がないこと）
 --   S2  提出の成功（勤務日数は日付の重複を除く・前後に空白がある memo は締められる）
 --   S3  提出のエラー（月の指定・翌月1日より前・0件・空の memo・二重提出）
 --   S4  画面から呼ぶ形の提出（本物の 2026年11月分はまだ締められない・ログインしていない）
 --   S5  締めた月の kintai を止める（追加・編集・日付の移動・削除・取り込み）。
 --       Slack 報告の印だけの更新・別の月は通る。SQL Editor（postgres）も止まる
---   S6  取り下げ
+--   S6  提出後は本人が取り消せない（取り下げの関数がない・締めの行を書き換えられない）。
+--       管理者が差し戻すと、本人が追加・再提出できる
 --   S7  承認（管理者だけ・自分の締めは不可・単価なし・金額の切り捨て・承認後も止まる）
 --   S8  差し戻し（管理者だけ・自分の締めは不可・承認済からも可・その後は編集と再提出ができる）
 --   S9  履歴
@@ -97,7 +105,7 @@ DECLARE
   c_reset       constant text := 'RESET ROLE';
   c_approve     constant text := $q$SELECT public.approve_kintai_closing('{uid}', '2099-01-01')$q$;
   c_return      constant text := $q$SELECT public.return_kintai_closing('{uid}', '2099-01-01')$q$;
-  c_withdraw    constant text := $q$SELECT public.withdraw_kintai_closing('2099-01-01')$q$;
+  c_withdraw    constant text := $q$SELECT public.withdraw_kintai_closing('2099-01-01'::date)::text$q$;   -- 2026-11-19 に消した関数（呼べないことの確認用）
   c_status      constant text := $q$SELECT status FROM public.kintai_closing WHERE user_id = '{uid}' AND month = '2099-01-01'$q$;
   c_ins_jan10   constant text := $q$INSERT INTO public.kintai (date, start_time, end_time, break_min, memo, user_id) VALUES
                    ('2099-01-10', '09:00', '18:00', 60, '{marker}', '{uid}') RETURNING work_min::text$q$;
@@ -146,10 +154,9 @@ BEGIN
                       WHERE c.oid IN ('public.kintai_closing'::regclass, 'public.kintai_closing_log'::regclass,
                                       'public.kintai_closing_id_seq'::regclass, 'public.kintai_closing_log_id_seq'::regclass)
                         AND g.grantee = 0))::text),
-    (9, 'S1', '画面から呼ぶ関数 4 つ：SECURITY DEFINER・search_path・authenticated だけ実行できる', '4',
+    (9, 'S1', '画面から呼ぶ関数 3 つ：SECURITY DEFINER・search_path・authenticated だけ実行できる', '3',
         (SELECT count(*)::text FROM pg_proc p
           WHERE p.oid IN (to_regprocedure('public.submit_kintai_closing(date)'),
-                          to_regprocedure('public.withdraw_kintai_closing(date)'),
                           to_regprocedure('public.approve_kintai_closing(uuid, date)'),
                           to_regprocedure('public.return_kintai_closing(uuid, date)'))
             AND p.prosecdef AND p.proconfig = ARRAY['search_path=""']
@@ -157,13 +164,12 @@ BEGIN
             AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')
             AND p.proacl IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM aclexplode(p.proacl) g WHERE g.grantee = 0))),
-    (10, 'S1', 'private の関数 7 つ：search_path・PUBLIC・anon・authenticated は実行できない', '7',
+    (10, 'S1', 'private の関数 6 つ：search_path・PUBLIC・anon・authenticated は実行できない', '6',
         (SELECT count(*)::text FROM pg_proc p
           WHERE p.oid IN (to_regprocedure('private.kintai_closing_lock_key(uuid, date)'),
                           to_regprocedure('private.kintai_month_is_closed(uuid, text)'),
                           to_regprocedure('private.kintai_assert_month_open(uuid, text)'),
                           to_regprocedure('private.kintai_closing_submit(uuid, date, uuid, date)'),
-                          to_regprocedure('private.kintai_closing_withdraw(uuid, date, uuid)'),
                           to_regprocedure('private.kintai_closing_approve(uuid, date, uuid)'),
                           to_regprocedure('private.kintai_closing_return(uuid, date, uuid)'))
             AND p.proconfig = ARRAY['search_path=""']
@@ -171,12 +177,11 @@ BEGIN
             AND NOT has_function_privilege('authenticated', p.oid, 'EXECUTE')
             AND p.proacl IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM aclexplode(p.proacl) g WHERE g.grantee = 0))),
-    (11, 'S1', 'private の関数のうち SECURITY DEFINER は 6 つ（鍵を作る関数以外）', '6',
+    (11, 'S1', 'private の関数のうち SECURITY DEFINER は 5 つ（鍵を作る関数以外）', '5',
         (SELECT count(*)::text FROM pg_proc p
           WHERE p.pronamespace = 'private'::regnamespace AND p.prosecdef
             AND p.proname IN ('kintai_closing_lock_key', 'kintai_month_is_closed', 'kintai_assert_month_open',
-                              'kintai_closing_submit', 'kintai_closing_withdraw',
-                              'kintai_closing_approve', 'kintai_closing_return'))),
+                              'kintai_closing_submit', 'kintai_closing_approve', 'kintai_closing_return'))),
     (12, 'S1', 'トリガー関数：SECURITY DEFINER・PUBLIC・anon・authenticated は実行できない', 'true',
         (SELECT (p.prosecdef AND p.proconfig = ARRAY['search_path=""']
                  AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')
@@ -194,18 +199,21 @@ BEGIN
         'kintai_block_closed_month,kintai_compute_work_min,kintai_reset_slack_reported',
         (SELECT string_agg(t.tgname::text, ',' ORDER BY t.tgname) FROM pg_trigger t
           WHERE t.tgrelid = 'public.kintai'::regclass AND NOT t.tgisinternal AND (t.tgtype & 2) = 2)),
-    (15, 'S10', '提出・取り下げ・承認・差し戻しの本体に排他の advisory lock がある', '4',
+    (15, 'S10', '提出・承認・差し戻しの本体に排他の advisory lock がある', '3',
         (SELECT count(*)::text FROM pg_proc p
           WHERE p.oid IN (to_regprocedure('private.kintai_closing_submit(uuid, date, uuid, date)'),
-                          to_regprocedure('private.kintai_closing_withdraw(uuid, date, uuid)'),
                           to_regprocedure('private.kintai_closing_approve(uuid, date, uuid)'),
                           to_regprocedure('private.kintai_closing_return(uuid, date, uuid)'))
             AND position('pg_advisory_xact_lock(private.kintai_closing_lock_key(' IN pg_get_functiondef(p.oid)) > 0)),
     (16, 'S10', 'トリガーが使う関数に共有の advisory lock がある', 'true',
         (SELECT (position('pg_advisory_xact_lock_shared(private.kintai_closing_lock_key(' IN pg_get_functiondef(p.oid)) > 0)::text
-           FROM pg_proc p WHERE p.oid = to_regprocedure('private.kintai_assert_month_open(uuid, text)')))
+           FROM pg_proc p WHERE p.oid = to_regprocedure('private.kintai_assert_month_open(uuid, text)'))),
+    (17, 'S1', '取り下げの関数がない（2026-11-19 になくした。public・private を名前で数える）', '0',
+        (SELECT count(*)::text FROM pg_proc p
+          WHERE p.pronamespace IN ('public'::regnamespace, 'private'::regnamespace)
+            AND p.proname IN ('withdraw_kintai_closing', 'kintai_closing_withdraw')))
   ) AS v(n, item, label, expect, got);
-  v_seq := v_seq + 16;
+  v_seq := v_seq + 17;
 
   -- ---------- S2〜S9 動作テスト（1 件ずつ取り消す） ----------
   FOR v_case IN
@@ -326,22 +334,20 @@ BEGIN
              $q$UPDATE public.kintai SET memo = 'x' WHERE user_id = '{uid}' AND date = '2099-01-06' RETURNING memo$q$],
        '55000:kintai_month_closed'),
 
-      -- S6 取り下げ（本人として）
-      ('S6', '提出済 → 取り下げ',
-       ARRAY[c_ins, c_submit, c_as_user, c_role, $q$SELECT (public.withdraw_kintai_closing('2099-01-01')).status$q$],
-       'withdrawn'),
-      ('S6', '取り下げの後は追加できる（work_min）',
-       ARRAY[c_ins, c_submit, c_as_user, c_role, c_withdraw, c_ins_jan10],
+      -- S6 提出後は本人が取り消せない。管理者の差し戻しで直せる（2026-11-19 に取り下げをなくした）
+      ('S6', '本人は取り下げを呼べない（関数がない）',
+       ARRAY[c_ins, c_submit, c_as_user, c_role, c_withdraw],
+       '42883:*'),   -- 関数がない（文言は環境で変わるので番号だけ見る）
+      ('S6', '本人は締めの行を直接書き換えられない',
+       ARRAY[c_ins, c_submit, c_as_user, c_role,
+             $q$UPDATE public.kintai_closing SET status = 'returned' WHERE user_id = '{uid}' AND month = '2099-01-01' RETURNING status$q$],
+       '42501:*'),   -- 権限がない（文言は環境で変わるので番号だけ見る）
+      ('S6', '提出済 → 管理者が差し戻し → 本人が追加できる（work_min）',
+       ARRAY[c_ins, c_submit, c_as_admin, c_role, c_return, c_reset, c_as_user, c_role, c_ins_jan10],
        '480'),
-      ('S6', '取り下げの後は再提出できる',
-       ARRAY[c_ins, c_submit, c_as_user, c_role, c_withdraw, c_reset, c_submit, c_status],
+      ('S6', '提出済 → 管理者が差し戻し → 再提出できる',
+       ARRAY[c_ins, c_submit, c_as_admin, c_role, c_return, c_reset, c_submit, c_status],
        'submitted'),
-      ('S6', '承認済は取り下げできない',
-       ARRAY[c_ins, c_rate, c_submit, c_as_admin, c_role, c_approve, c_reset, c_as_user, c_role, c_withdraw],
-       '55000:kintai_closing_bad_status'),
-      ('S6', '締めがない月は取り下げできない',
-       ARRAY[c_as_user, c_role, c_withdraw],
-       '55000:kintai_closing_bad_status'),
 
       -- S7 承認
       ('S7', '管理者でない（本人）は承認できない',
@@ -402,24 +408,24 @@ BEGIN
              $q$SELECT status || ' ' || total_work_min FROM public.kintai_closing
                  WHERE user_id = '{uid}' AND month = '2099-01-01'$q$],
        'submitted 1290'),
-      ('S8', '取り下げた締めは差し戻しできない',
-       ARRAY[c_ins, c_submit, c_as_user, c_role, c_withdraw, c_reset, c_as_admin, c_role, c_return],
+      ('S8', '差し戻し済の締めをもう一度差し戻しできない',
+       ARRAY[c_ins, c_submit, c_as_admin, c_role, c_return, c_return],
        '55000:kintai_closing_bad_status'),
 
-      -- S9 履歴（提出 → 承認 → 差し戻し → 再提出 → 取り下げ）
+      -- S9 履歴（提出 → 承認 → 差し戻し → 再提出 → 差し戻し）
       ('S9', '履歴の操作と状態の変化（古い順）',
        ARRAY[c_ins, c_rate, c_submit, c_as_admin, c_role, c_approve, c_return, c_reset, c_submit,
-             c_as_user, c_role, c_withdraw, c_reset,
+             c_as_admin, c_role, c_return, c_reset,
              $q$SELECT string_agg(action || ':' || coalesce(from_status, '-') || '>' || to_status, ',' ORDER BY id)
                 FROM public.kintai_closing_log WHERE user_id = '{uid}' AND month = '2099-01-01'$q$],
-       'submit:->submitted,approve:submitted>approved,return:approved>returned,submit:returned>submitted,withdraw:submitted>withdrawn'),
+       'submit:->submitted,approve:submitted>approved,return:approved>returned,submit:returned>submitted,return:submitted>returned'),
       ('S9', '履歴の操作した人（古い順）',
        ARRAY[c_ins, c_rate, c_submit, c_as_admin, c_role, c_approve, c_return, c_reset, c_submit,
-             c_as_user, c_role, c_withdraw, c_reset,
+             c_as_admin, c_role, c_return, c_reset,
              $q$SELECT string_agg(action || ':' || CASE actor WHEN '{uid}' THEN '本人' WHEN '{admin}' THEN '管理者'
                                                           ELSE coalesce(actor::text, 'null') END, ',' ORDER BY id)
                 FROM public.kintai_closing_log WHERE user_id = '{uid}' AND month = '2099-01-01'$q$],
-       'submit:本人,approve:管理者,return:管理者,submit:本人,withdraw:本人'),
+       'submit:本人,approve:管理者,return:管理者,submit:本人,return:管理者'),
       ('S9', '承認の履歴に単価と金額が残る',
        ARRAY[c_ins, c_rate, c_submit, c_as_admin, c_role, c_approve, c_reset,
              $q$SELECT rate || ' ' || amount FROM public.kintai_closing_log
@@ -476,7 +482,9 @@ $$;
 -- 結果（先頭の「まとめ」行で NG の件数を見る。期待値: 0）
 WITH r AS (
   SELECT seq, item, label, expect, got,
-         CASE WHEN got IS NOT DISTINCT FROM expect THEN 'OK' ELSE 'NG' END AS judge
+         CASE WHEN got IS NOT DISTINCT FROM expect
+                OR (right(expect, 2) = ':*' AND split_part(got, ':', 1) = split_part(expect, ':', 1))
+              THEN 'OK' ELSE 'NG' END AS judge
   FROM pg_temp.closing_result
 )
 SELECT judge AS 判定, item AS 項目, label AS 内容, expect AS 期待, got AS 結果
