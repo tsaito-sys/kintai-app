@@ -240,7 +240,7 @@
     .summary-card .label { font-size: 0.82rem; color: #4a5568; line-height: 1.3; margin-bottom: 2px; }
     .summary-card .value { font-size: 1.62rem; font-weight: 700; color: #2b6cb0; line-height: 1.2; } /* 日付input(0.9rem)の1.8倍 */
 
-    /* ─── 締めの状態の帯（本人の一覧・表示月がちょうど1か月で 2026年11月以降のとき） ─── */
+    /* ─── 締めの状態の帯（本人・管理者の一覧。表示月がちょうど1か月で 2026年11月以降のとき） ─── */
     .closing-bar {
       display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
       padding: 10px 14px; margin-bottom: 16px;
@@ -256,7 +256,8 @@
     .closing-badge.st-approved  { background: #c6f6d5; color: #276749; }
     .closing-badge.st-returned  { background: #fed7d7; color: #c53030; }
     .closing-msg { color: #4a5568; }
-    .closing-bar .btn { padding: 6px 16px; margin-left: auto; }
+    .closing-actions { margin-left: auto; display: flex; gap: 8px; }
+    .closing-bar .btn { padding: 6px 16px; }
     .closing-bar .btn[hidden] { display: none; }
     /* 締めた月（提出済・承認済）の行 */
     .closed-note { margin-top: 6px; font-size: 0.72rem; color: #975a16; font-weight: 600; white-space: normal; }
@@ -718,12 +719,17 @@
     </div>
     </div><!-- /.list-toolbar -->
 
-    <!-- 締めの状態（本人のみ。表示月がちょうど1か月で 2026年11月以降のときだけ出す。renderClosingBar） -->
+    <!-- 締めの状態（表示月がちょうど1か月で 2026年11月以降のときだけ出す。renderClosingBar）
+         本人: 提出ボタン。管理者: 選んでいるユーザーの締めの承認・差し戻しボタン（事業管理システムに移すまでの仮） -->
     <div id="closing-bar" class="closing-bar" style="display:none">
       <span class="closing-title" id="closing-title"></span>
       <span class="closing-badge" id="closing-badge"></span>
       <span class="closing-msg" id="closing-msg"></span>
-      <button type="button" class="btn btn-primary" id="closing-submit-btn" onclick="submitClosing()" hidden>締める（提出）</button>
+      <span class="closing-actions">
+        <button type="button" class="btn btn-primary" id="closing-submit-btn" onclick="submitClosing()" hidden>締める（提出）</button>
+        <button type="button" class="btn btn-primary" id="closing-approve-btn" onclick="approveClosing()" hidden>承認</button>
+        <button type="button" class="btn btn-secondary" id="closing-return-btn" onclick="returnClosing()" hidden>差し戻し</button>
+      </span>
     </div>
 
     <!-- テーブル -->
@@ -1541,18 +1547,22 @@
     query = query.gte('date', from).lte('date', to);
 
     // 管理者: 選択ユーザーで絞り込み
+    let selectedUserId = '';
     if (currentRole === 'admin') {
-      const selectedUserId = document.getElementById('filter-user').value;
+      selectedUserId = document.getElementById('filter-user').value;
       if (selectedUserId) query = query.eq('user_id', selectedUserId);
     }
 
     // 本人: 表示期間に含まれる月の締めも一緒に読む
-    const [{ data, error }, closingRes] = await Promise.all([query, fetchClosings(from, to)]);
+    // 管理者: 選んでいるユーザーの表示月の締めと今の単価も一緒に読む
+    const [{ data, error }, closingRes, adminClosingRes] = await Promise.all([
+      query, fetchClosings(from, to), fetchAdminClosing(from, to, selectedUserId)]);
     if (seq !== loadRecordsSeq) return; // もっと新しい取得が始まっている
     if (error) { showToast('取得失敗: ' + error.message, true); return; }
 
     records = data || [];
     applyClosings(closingRes, from, to);
+    adminClosing = adminClosingRes;
 
     renderTable(records);
     renderSummary(records);
@@ -1757,8 +1767,11 @@ ${escHtml(r.memo || '')}</textarea></td>
   }
 
   function renderClosingBar() {
+    if (currentRole === 'admin') { renderAdminClosingBar(); return; }
     const bar = document.getElementById('closing-bar');
-    if (currentRole === 'admin' || !closingMonth) { bar.style.display = 'none'; return; }
+    document.getElementById('closing-approve-btn').hidden = true;
+    document.getElementById('closing-return-btn').hidden = true;
+    if (!closingMonth) { bar.style.display = 'none'; return; }
 
     const { y, m } = closingMonth;
     const c = closingByMonth.get(ymKey(y, m));
@@ -1806,17 +1819,129 @@ ${escHtml(r.memo || '')}</textarea></td>
       return;
     }
     if (!confirm(`${y}年${m}月分を提出します。\n提出後は、この月の勤怠を追加・編集・削除できません。自分では取り消せません（直す場合は管理者に差し戻しを依頼してください）。\nよろしいですか？`)) return;
-    await runClosingRpc('submit_kintai_closing', `${y}年${m}月分を提出しました`);
+    await runClosingRpc('submit_kintai_closing', { p_month: `${ymKey(y, m)}-01` }, `${y}年${m}月分を提出しました`);
   }
 
-  // 締めの rpc（今は提出だけ）を呼ぶ。成否にかかわらず、終わったら一覧と帯を読み直す
+  // ─── 月の締め（管理者・仮） ────────────────────────────────
+  // 選んでいるユーザーの表示月の締めを、承認・差し戻しする（事業管理システムに承認画面ができるまでの仮のボタン）。
+  // DB: kintai_closing（RLS で管理者は全員の行を読める）・profiles.inv_rate と
+  //     rpc approve_kintai_closing / return_kintai_closing（管理者か・自分の締めでないかは DB が確かめる）
+  let adminClosing = null;   // { uid, y, m, row, rate, error }（帯を出さないときは null）
+
+  // 表示月がちょうど1か月で 2026年11月以降のときだけ、その月の締めと今の単価を読む（管理者のみ）
+  async function fetchAdminClosing(from, to, uid) {
+    if (currentRole !== 'admin' || !uid) return null;
+    const wm = wholeMonthOf(from, to);
+    if (!wm || ymKey(wm.y, wm.m) < CLOSING_FIRST_MONTH) return null;
+    const res = { uid, y: wm.y, m: wm.m, row: null, rate: null, error: null };
+    try {
+      const [c, p] = await Promise.all([
+        sb.from('kintai_closing')
+          .select('status, work_days, total_work_min, submitted_at, approved_at, rate, amount, returned_at')
+          .eq('user_id', uid).eq('month', `${ymKey(wm.y, wm.m)}-01`).maybeSingle(),
+        // 単価は本人がいつでも変えられるので、ログイン時の値ではなく毎回読む
+        sb.from('profiles').select('inv_rate').eq('id', uid).maybeSingle(),
+      ]);
+      res.error = c.error || p.error || null;
+      res.row = c.data ?? null;
+      res.rate = p.data?.inv_rate ?? null;
+    } catch (e) {
+      res.error = e;
+    }
+    if (res.error) console.error('[Closing] admin load error:', res.error.message || res.error);
+    return res;
+  }
+
+  const fmtYen   = n => Number(n).toLocaleString('ja-JP') + '円';
+  const fmtHours = min => (Number(min) / 60).toFixed(2) + ' h';
+  const adminClosingName = uid => (allProfiles[uid] || '（不明）') + 'さん';
+
+  function renderAdminClosingBar() {
+    const bar = document.getElementById('closing-bar');
+    const subBtn = document.getElementById('closing-submit-btn');
+    const apBtn  = document.getElementById('closing-approve-btn');
+    const rtBtn  = document.getElementById('closing-return-btn');
+    subBtn.hidden = true;
+    apBtn.hidden = true;
+    rtBtn.hidden = true;
+    const ac = adminClosing;
+    if (!ac) { bar.style.display = 'none'; return; }
+
+    const c = ac.row;
+    // 取り下げ済（2026-11-19 より前のデータだけ）は未提出と同じ
+    const status = c?.status === 'withdrawn' ? null : (c?.status ?? null);
+    const badge = document.getElementById('closing-badge');
+    const self  = ac.uid === currentUser?.id;
+    const parts = [];
+
+    document.getElementById('closing-title').textContent = `${adminClosingName(ac.uid)}の${ac.y}年${ac.m}月分の締め`;
+    badge.className = 'closing-badge' + (status && !ac.error ? ' st-' + status : '');
+    apBtn.disabled = closingBusy;
+    rtBtn.disabled = closingBusy;
+
+    if (ac.error) {
+      badge.textContent = '—';
+      parts.push('締めの状態を読み込めませんでした。画面を読み直してください');
+    } else if (status === 'submitted') {
+      badge.textContent = '提出済（承認待ち）';
+      parts.push(`提出 ${formatReportedAt(c.submitted_at)}`,
+                 `勤務 ${c.work_days}日・合計 ${fmtHours(c.total_work_min)}`);
+      if (!self) {
+        apBtn.hidden = false;
+        rtBtn.hidden = false;
+        if (!(ac.rate > 0)) {
+          apBtn.disabled = true;
+          parts.push(CLOSING_MESSAGES.kintai_closing_no_rate);
+        }
+      }
+    } else if (status === 'approved') {
+      badge.textContent = '承認済';
+      parts.push(`承認 ${formatReportedAt(c.approved_at)}`,
+                 `勤務 ${c.work_days}日・合計 ${fmtHours(c.total_work_min)}`,
+                 `単価 ${fmtYen(c.rate)}・金額 ${fmtYen(c.amount)}（税抜）`);
+      if (!self) rtBtn.hidden = false;
+    } else if (status === 'returned') {
+      badge.textContent = '差し戻し';
+      parts.push(`差し戻し ${formatReportedAt(c.returned_at)}`, '本人の再提出待ちです');
+    } else {
+      badge.textContent = '未提出';
+      parts.push('本人はまだ提出していません');
+    }
+    if (self && !ac.error) parts.push(CLOSING_MESSAGES.kintai_closing_self_operation);
+
+    document.getElementById('closing-msg').textContent = parts.join('。');
+    bar.style.display = '';
+  }
+
+  async function approveClosing() {
+    const ac = adminClosing;
+    if (!sb || !ac || closingBusy || ac.row?.status !== 'submitted') return;
+    const who = `${adminClosingName(ac.uid)}の${ac.y}年${ac.m}月分`;
+    if (!(ac.rate > 0)) { showToast(CLOSING_MESSAGES.kintai_closing_no_rate, true, 5000); return; }
+    if (!confirm(`${who}を承認しますか？\n今の単価（${fmtYen(ac.rate)}）で金額を計算して保存します。`)) return;
+    await runClosingRpc('approve_kintai_closing', { p_user_id: ac.uid, p_month: `${ymKey(ac.y, ac.m)}-01` },
+                        `${who}を承認しました`);
+  }
+
+  async function returnClosing() {
+    const ac = adminClosing;
+    const st = ac?.row?.status;
+    if (!sb || !ac || closingBusy || (st !== 'submitted' && st !== 'approved')) return;
+    const who = `${adminClosingName(ac.uid)}の${ac.y}年${ac.m}月分`;
+    const q = `${who}を差し戻しますか？\n本人がこの月の勤怠を直せるようになります。` +
+              (st === 'approved' ? '\n承認済のため、承認（単価・金額）は取り消されます。' : '');
+    if (!confirm(q)) return;
+    await runClosingRpc('return_kintai_closing', { p_user_id: ac.uid, p_month: `${ymKey(ac.y, ac.m)}-01` },
+                        `${who}を差し戻しました`);
+  }
+
+  // 締めの rpc（提出・承認・差し戻し）を呼ぶ。成否にかかわらず、終わったら一覧と帯を読み直す
   // （別の画面で状態が変わっていた場合も、読み直して今の状態を出す）
-  async function runClosingRpc(fn, okMsg) {
-    const { y, m } = closingMonth;
+  async function runClosingRpc(fn, params, okMsg) {
     closingBusy = true;
     renderClosingBar();
     try {
-      const { error } = await sb.rpc(fn, { p_month: `${ymKey(y, m)}-01` });
+      const { error } = await sb.rpc(fn, params);
       if (error) {
         const ce = closingError(error);
         showToast(ce ? ce.text : '締めの操作に失敗しました: ' + error.message, true, 8000);
