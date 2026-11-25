@@ -1059,7 +1059,16 @@
   }
 
   // ─── 認証初期化 ───────────────────────────────────────────
+  // ログアウトでサーバーへの取り消しが失敗し、読み込み直したときの案内（doLogout）
+  const LOGOUT_NOTICE_KEY = 'kintai_logout_notice';
+
   (function initApp() {
+    try {
+      if (sessionStorage.getItem(LOGOUT_NOTICE_KEY)) {
+        sessionStorage.removeItem(LOGOUT_NOTICE_KEY);
+        showToast('サーバーへのログアウトは確認できませんでしたが、この画面からはログアウトしました', false, 6000);
+      }
+    } catch (_) {}
     try {
       sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -1944,6 +1953,11 @@ ${escHtml(r.memo || '')}</textarea></td>
         let b = null;
         try { b = await error.context?.clone?.().json(); } catch (_) {}
         let msg = await extractFnError(error);
+        // 401 = ログインが確かめられない（別の画面でのログアウトで取り消された・期限切れ・印がない・
+        // 関数の入口ではじかれた）。関数の文言の代わりに、次にすることを案内する
+        if (error.context?.status === 401) {
+          msg = 'ログインが無効になっています。ページを読み込み直してログインし直してください';
+        }
         // 別タブなどで先に報告済みになっていた場合は印を反映
         if (b?.code === 'already_reported' && b.slack_reported_at) {
           rec.slack_reported_at = b.slack_reported_at; updateSlackMark(tr, rec);
@@ -3096,15 +3110,40 @@ function dlPDF() {
     }
   }
 
+  // ログアウトはこの画面のログインだけに効かせる（scope: 'local'）。
+  // 引数なしの signOut() はそのアカウントの全部のログイン（別のタブ・別の端末）を取り消してしまう。
+  // サーバーへの取り消しが失敗しても（別の画面で取り消し済みの 403 Session not found など）、
+  // この画面のログイン情報は必ず消してログイン画面に戻す
   async function doLogout() {
-    const { error } = await sb.auth.signOut();
-    if (error) { showToast('ログアウトに失敗しました: ' + error.message, true); return; }
+    let failed = null;
+    try {
+      const { error } = await sb.auth.signOut({ scope: 'local' });
+      if (error) failed = error;
+    } catch (e) {
+      failed = e;
+    }
+    if (failed) {
+      console.warn('[Auth] signOut error (この画面のログイン情報は消す):', failed);
+      // ライブラリが消せなかったログイン情報を直接消す（キーは supabase-js の既定 sb-<プロジェクト>-auth-token）
+      try {
+        const ref = new URL(SUPABASE_URL).hostname.split('.')[0];
+        localStorage.removeItem(`sb-${ref}-auth-token`);
+      } catch (e) {
+        console.error('[Auth] remove session error:', e);
+      }
+    }
     currentUser = null; currentRole = 'user'; currentProfile = null; allProfiles = {};
     records = [];
     document.getElementById('header-user').style.display = 'none';
     document.getElementById('status-dot').classList.remove('connected');
     document.getElementById('status-label').textContent = '未接続';
     showScreen('login');
+
+    if (failed) {
+      // ライブラリのメモリ上に残ったログインも消すため読み込み直す。案内は読み込み直した後に出す
+      try { sessionStorage.setItem(LOGOUT_NOTICE_KEY, '1'); } catch (_) {}
+      location.reload();
+    }
   }
 
   async function saveProfile() {
